@@ -51,7 +51,10 @@ export default function Header({ onAuthClick }) {
             whileTap={{ scale: 0.95 }}
             aria-label="Toggle theme"
           >
-            {theme === "dark" ? <HiSun size={20} /> : <HiMoon size={20} />}
+            <span className={styles.themeIcon} aria-hidden="true">
+              <HiSun size={20} className={styles.sun} />
+              <HiMoon size={20} className={styles.moon} />
+            </span>
           </motion.button>
 
           <motion.button

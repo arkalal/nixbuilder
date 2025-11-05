@@ -76,6 +76,29 @@
   }
 }
 
+/* Theme icon renders both sun and moon to keep SSR/CSR markup identical */
+.themeIcon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.themeIcon .sun {
+  display: none;
+}
+
+.themeIcon .moon {
+  display: block;
+}
+
+:global([data-theme="dark"]) .themeIcon .sun {
+  display: block;
+}
+
+:global([data-theme="dark"]) .themeIcon .moon {
+  display: none;
+}
+
 .authBtn {
   background: linear-gradient(135deg, var(--color-primary-start), var(--color-primary-end));
   color: white;

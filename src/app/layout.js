@@ -18,12 +18,17 @@ const firaCode = Fira_Code({
 
 export const metadata = {
   title: "nixbuilder.dev - Build Full-Stack Next.js Apps with AI",
-  description: "Describe your app. Get a live Next.js build in minutes. Plan → Code → Preview on Fly.io. Auth, DB, APIs included.",
+  description:
+    "Describe your app. Get a live Next.js build in minutes. Plan → Code → Preview on Fly.io. Auth, DB, APIs included.",
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      className={`${dmSans.variable} ${firaCode.variable}`}
+      lang="en"
+      suppressHydrationWarning
+    >
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -36,10 +41,8 @@ export default function RootLayout({ children }) {
           }}
         />
       </head>
-      <body className={`${dmSans.variable} ${firaCode.variable}`} suppressHydrationWarning>
-        <ThemeProvider>
-          {children}
-        </ThemeProvider>
+      <body suppressHydrationWarning>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );
