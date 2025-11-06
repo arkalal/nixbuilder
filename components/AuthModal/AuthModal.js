@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { HiX } from "react-icons/hi";
 import { FaGoogle } from "react-icons/fa";
 import { useState } from "react";
+import { signIn } from "next-auth/react";
 import styles from "./AuthModal.module.scss";
 
 export default function AuthModal({ isOpen, onClose }) {
@@ -14,9 +15,8 @@ export default function AuthModal({ isOpen, onClose }) {
 
   const handleGoogleAuth = () => {
     setLoading(true);
-    // This will be connected to NextAuth later
-    console.log("Google auth clicked");
-    setTimeout(() => setLoading(false), 2000);
+    // Trigger NextAuth Google sign-in
+    signIn("google", { callbackUrl: "/" }).catch(() => setLoading(false));
   };
 
   const handleEmailAuth = (e) => {

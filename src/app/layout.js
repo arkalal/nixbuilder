@@ -1,6 +1,7 @@
 import { DM_Sans, Fira_Code } from "next/font/google";
 import "./globals.scss";
 import { ThemeProvider } from "../../components/ThemeProvider";
+import SessionProvider from "../../components/SessionProvider";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -42,7 +43,9 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body suppressHydrationWarning>
-        <ThemeProvider>{children}</ThemeProvider>
+        <SessionProvider>
+          <ThemeProvider>{children}</ThemeProvider>
+        </SessionProvider>
       </body>
     </html>
   );
