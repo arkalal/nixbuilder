@@ -132,6 +132,14 @@ export async function POST(request) {
           send("stream", { content: "\n\n" + conversationalBuffer.trim() });
         }
         
+        // Extract explanation from generated code (open-lovable approach)
+        const explanationMatch = generatedCode.match(/<explanation>([\s\S]*?)<\/explanation>/);
+        if (explanationMatch) {
+          const explanation = explanationMatch[1].trim();
+          console.log(`[API] Extracted explanation: "${explanation.substring(0, 100)}..."`);
+          send("explanation", { text: explanation });
+        }
+        
         console.log("[API] Stream finished, now parsing files...");
 
         // Parse ALL files from the generated code (open-lovable approach)

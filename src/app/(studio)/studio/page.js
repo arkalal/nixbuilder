@@ -18,6 +18,7 @@ export default function StudioPage() {
   // Open-lovable style streaming state
   const [streamingCode, setStreamingCode] = useState("");
   const [currentFile, setCurrentFile] = useState(null); // { path, content, type }
+  const [completedFiles, setCompletedFiles] = useState([]); // Persisted completed files for this generation
 
   const handleSendMessage = async (message) => {
     // Add user message
@@ -119,6 +120,24 @@ export default function StudioPage() {
         if (data.stage === "generating") {
           setStreamingCode("");  // Clear streaming code on new generation
           setCurrentFile(null);
+          setCompletedFiles([]);  // Clear completed files on new generation
+        }
+        break;
+
+      case "explanation":
+        // Add explanation text to AI message (open-lovable approach)
+        if (data.text) {
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id === messageId) {
+                return {
+                  ...msg,
+                  content: data.text,
+                };
+              }
+              return msg;
+            })
+          );
         }
         break;
 
@@ -141,7 +160,7 @@ export default function StudioPage() {
                   fileType === 'json' ? 'json' : 'text'
           });
         } else if (data.status === "completed" && data.file) {
-          // File generation completed
+          // File generation completed - clear current file
           setCurrentFile(null);
         }
         
@@ -190,8 +209,13 @@ export default function StudioPage() {
         break;
 
       case "file_write":
-        // Add file to files list
+        // Add file to files list AND completed files for chat display
         console.log(`[Frontend] file_write event: ${data.path}`);
+        
+        // Add to completed files array (persisted in chat)
+        setCompletedFiles((prev) => [...prev, { path: data.path, content: data.content }]);
+        
+        // Add to files list (for Code tab)
         setFiles((prev) => {
           const existing = prev.find((f) => f.path === data.path);
           if (existing) {
@@ -220,9 +244,10 @@ export default function StudioPage() {
         // All files generated
         console.log(`[Frontend] complete event received, files:`, data.files ? Object.keys(data.files).length : 0);
         
-        // Clear streaming state (open-lovable approach)
+        // Clear streaming state BUT keep completedFiles (open-lovable approach)
         setStreamingCode("");
         setCurrentFile(null);
+        // Don't clear completedFiles - they persist in chat history
         
         if (data.files) {
           const fileArray = Object.entries(data.files).map(([path, content]) => ({
@@ -288,6 +313,7 @@ export default function StudioPage() {
             onModelChange={setSelectedModel}
             streamingCode={streamingCode}
             currentFile={currentFile}
+            completedFiles={completedFiles}
           />
         }
         rightPanel={

@@ -8,7 +8,7 @@ import MessageTimeline from "../MessageTimeline/MessageTimeline";
 import ModelSelector from "../ModelSelector/ModelSelector";
 import styles from "./Composer.module.scss";
 
-export default function Composer({ messages, stage, onSendMessage, selectedModel, onModelChange, streamingCode, currentFile }) {
+export default function Composer({ messages, stage, onSendMessage, selectedModel, onModelChange, streamingCode, currentFile, completedFiles }) {
   const [inputValue, setInputValue] = useState("");
   const textareaRef = useRef(null);
 
@@ -62,6 +62,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
           messages={messages}
           streamingCode={streamingCode}
           currentFile={currentFile}
+          completedFiles={completedFiles}
         />
       </div>
 

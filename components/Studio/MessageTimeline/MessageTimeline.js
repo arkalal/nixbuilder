@@ -5,7 +5,7 @@ import { FiUser, FiCpu, FiCheck, FiLoader, FiAlertCircle } from "react-icons/fi"
 import StreamingCodeDisplay from "../StreamingCodeDisplay/StreamingCodeDisplay";
 import styles from "./MessageTimeline.module.scss";
 
-export default function MessageTimeline({ messages, streamingCode, currentFile }) {
+export default function MessageTimeline({ messages, streamingCode, currentFile, completedFiles }) {
   if (messages.length === 0) {
     return (
       <div className={styles.emptyState}>
@@ -98,10 +98,11 @@ export default function MessageTimeline({ messages, streamingCode, currentFile }
             {/* Show streaming code for the last AI message (open-lovable style) */}
             {message.role === "assistant" && 
              index === messages.length - 1 && 
-             (streamingCode || currentFile) && (
+             (streamingCode || currentFile || completedFiles.length > 0) && (
               <StreamingCodeDisplay 
                 streamingCode={streamingCode}
                 currentFile={currentFile}
+                completedFiles={completedFiles}
               />
             )}
           </motion.div>

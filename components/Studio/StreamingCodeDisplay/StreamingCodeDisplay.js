@@ -2,13 +2,10 @@
 
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { FiCheck } from "react-icons/fi";
 import styles from "./StreamingCodeDisplay.module.scss";
 
-export default function StreamingCodeDisplay({ streamingCode, currentFile }) {
-  if (!streamingCode && !currentFile) {
-    return null;
-  }
-
+export default function StreamingCodeDisplay({ streamingCode, currentFile, completedFiles = [] }) {
   // Get file type badge color
   const getFileTypeBadge = (type) => {
     switch (type) {
@@ -21,6 +18,14 @@ export default function StreamingCodeDisplay({ streamingCode, currentFile }) {
       default:
         return { label: 'FILE', className: styles.badgeDefault };
     }
+  };
+
+  const getFileType = (path) => {
+    const ext = path.split('.').pop();
+    if (ext === 'js' || ext === 'jsx') return 'javascript';
+    if (ext === 'css' || ext === 'scss') return 'css';
+    if (ext === 'json') return 'json';
+    return 'text';
   };
 
   return (
@@ -40,6 +45,39 @@ export default function StreamingCodeDisplay({ streamingCode, currentFile }) {
           </div>
         </div>
       )}
+
+      {/* Completed Files (persisted, not cleared) */}
+      {completedFiles.map((file, idx) => (
+        <div key={idx} className={styles.completedFileBlock}>
+          <div className={styles.completedHeader}>
+            <div className={styles.fileInfo}>
+              <FiCheck className={styles.checkIcon} />
+              <span className={styles.fileName}>{file.path}</span>
+              {(() => {
+                const badge = getFileTypeBadge(getFileType(file.path));
+                return <span className={`${styles.fileBadge} ${badge.className}`}>{badge.label}</span>;
+              })()}
+            </div>
+          </div>
+          <div className={styles.codePreview}>
+            <SyntaxHighlighter
+              language={getFileType(file.path) === 'javascript' ? 'jsx' : getFileType(file.path)}
+              style={vscDarkPlus}
+              customStyle={{
+                margin: 0,
+                padding: '0.75rem',
+                fontSize: '0.75rem',
+                background: 'transparent',
+                maxHeight: '150px',
+              }}
+              showLineNumbers={true}
+              wrapLongLines={true}
+            >
+              {file.content.substring(0, 500)}
+            </SyntaxHighlighter>
+          </div>
+        </div>
+      ))}
 
       {/* AI Response Stream */}
       {streamingCode && (

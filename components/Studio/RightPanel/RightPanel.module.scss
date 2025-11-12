@@ -68,3 +68,22 @@
   overflow: hidden;
   position: relative;
 }
+
+.codeTabLayout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.fileExplorerPanel {
+  width: 250px;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.codeViewerPanel {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}

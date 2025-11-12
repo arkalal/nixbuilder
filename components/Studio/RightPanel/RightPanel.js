@@ -2,6 +2,8 @@
 
 import { motion } from "framer-motion";
 import { FiCode, FiEye, FiTerminal } from "react-icons/fi";
+import { useState } from "react";
+import FileExplorer from "../FileExplorer/FileExplorer";
 import CodeViewer from "../CodeViewer/CodeViewer";
 import PreviewPanel from "../PreviewPanel/PreviewPanel";
 import LogsPanel from "../LogsPanel/LogsPanel";
@@ -21,6 +23,8 @@ export default function RightPanel({
   previewUrl,
   stage,
 }) {
+  const [selectedFile, setSelectedFile] = useState(null);
+
   return (
     <div className={styles.rightPanel}>
       <div className={styles.tabBar}>
@@ -49,7 +53,25 @@ export default function RightPanel({
       </div>
 
       <div className={styles.tabContent}>
-        {activeTab === "code" && <CodeViewer files={files} stage={stage} />}
+        {activeTab === "code" && (
+          <div className={styles.codeTabLayout}>
+            <div className={styles.fileExplorerPanel}>
+              <FileExplorer 
+                files={files}
+                selectedFile={selectedFile}
+                onFileSelect={setSelectedFile}
+              />
+            </div>
+            <div className={styles.codeViewerPanel}>
+              <CodeViewer 
+                files={files} 
+                stage={stage}
+                selectedFile={selectedFile}
+                onFileSelect={setSelectedFile}
+              />
+            </div>
+          </div>
+        )}
         {activeTab === "preview" && (
           <PreviewPanel previewUrl={previewUrl} stage={stage} />
         )}

@@ -7,8 +7,11 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { FiFile, FiFolder } from "react-icons/fi";
 import styles from "./CodeViewer.module.scss";
 
-export default function CodeViewer({ files, stage }) {
-  const [selectedFile, setSelectedFile] = useState(null);
+export default function CodeViewer({ files, stage, selectedFile: externalSelectedFile, onFileSelect }) {
+  const [internalSelectedFile, setInternalSelectedFile] = useState(null);
+
+  // Use external selectedFile if provided, otherwise use internal state
+  const selectedFilePath = externalSelectedFile || internalSelectedFile;
 
   if (files.length === 0) {
     return (
@@ -32,7 +35,16 @@ export default function CodeViewer({ files, stage }) {
     name: file.path.split("/").pop(),
   }));
 
-  const currentFile = selectedFile || filesWithNames[0];
+  // Find current file object
+  const currentFile = filesWithNames.find(f => f.path === selectedFilePath) || filesWithNames[0];
+  
+  const handleTabClick = (file) => {
+    if (onFileSelect) {
+      onFileSelect(file.path);
+    } else {
+      setInternalSelectedFile(file.path);
+    }
+  };
 
   return (
     <div className={styles.codeViewer}>
@@ -43,7 +55,7 @@ export default function CodeViewer({ files, stage }) {
             className={`${styles.fileTab} ${
               currentFile?.path === file.path ? styles.active : ""
             }`}
-            onClick={() => setSelectedFile(file)}
+            onClick={() => handleTabClick(file)}
           >
             <FiFile className={styles.fileIcon} />
             <span className={styles.fileName}>{file.name}</span>

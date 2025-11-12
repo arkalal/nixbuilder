@@ -119,3 +119,29 @@
     opacity: 0;
   }
 }
+
+.completedFileBlock {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface);
+  margin-bottom: var(--spacing-sm);
+}
+
+.completedHeader {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: #2d2d2d;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.checkIcon {
+  width: 14px;
+  height: 14px;
+  color: #22c55e;
+  flex-shrink: 0;
+}
+
+.codePreview {
+  background: #1e1e1e;
+  overflow: auto;
+}
