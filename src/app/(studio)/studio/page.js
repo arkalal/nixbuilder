@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import StudioLayout from "../../../../components/Studio/StudioLayout/StudioLayout";
 import Composer from "../../../../components/Studio/Composer/Composer";
 import RightPanel from "../../../../components/Studio/RightPanel/RightPanel";
@@ -19,6 +19,81 @@ export default function StudioPage() {
   const [streamingCode, setStreamingCode] = useState("");
   const [currentFile, setCurrentFile] = useState(null); // { path, content, type }
   const [completedFiles, setCompletedFiles] = useState([]); // Persisted completed files for this generation
+  
+  // Parse files from streamingCode in real-time (EXACT open-lovable approach - lines 2874-2968)
+  useEffect(() => {
+    if (!streamingCode || stage !== "generating") return;
+    
+    // Extract ALL completed files from accumulated stream (open-lovable line 2889)
+    const fileRegex = /<file path="([^"]+)">([^]*?)<\/file>/g;
+    let match;
+    const newFiles = [];
+    
+    // Build processedFiles Set from CURRENT state (open-lovable line 2891)
+    const processedFiles = new Set(files.map(f => f.path));
+    
+    while ((match = fileRegex.exec(streamingCode)) !== null) {
+      const filePath = match[1];
+      const fileContent = match[2].trim();
+      
+      // Only add if we haven't processed this file yet (open-lovable line 2898)
+      if (!processedFiles.has(filePath)) {
+        const fileExt = filePath.split('.').pop();
+        const fileType = (fileExt === 'jsx' || fileExt === 'js') ? 'javascript' :
+                        (fileExt === 'css' || fileExt === 'scss') ? 'css' :
+                        (fileExt === 'json') ? 'json' : 'text';
+        
+        // Add new file IMMEDIATELY (open-lovable line 2923-2929)
+        console.log(`[Frontend] ✅ File completed: ${filePath} - Adding to files array`);
+        newFiles.push({
+          path: filePath,
+          content: fileContent,
+          type: fileType,
+          createdAt: new Date().toISOString(),
+          completed: true
+        });
+        processedFiles.add(filePath);
+      }
+    }
+    
+    // Add completed files to state IMMEDIATELY (open-lovable does this synchronously)
+    if (newFiles.length > 0) {
+      console.log(`[Frontend] 📂 Adding ${newFiles.length} completed files immediately`);
+      setFiles(prev => [...prev, ...newFiles]);
+      setCompletedFiles(prev => [...prev, ...newFiles.map(f => ({path: f.path, content: f.content}))]);
+      
+      // Auto-switch to Code tab on first file
+      if (files.length === 0) {
+        setActiveTab("code");
+      }
+    }
+    
+    // Check for current file being generated (incomplete file at the end) - open-lovable line 2941
+    const lastFileMatch = streamingCode.match(/<file path="([^"]+)">([^]*?)$/);
+    if (lastFileMatch && !lastFileMatch[0].includes('</file>')) {
+      const filePath = lastFileMatch[1];
+      const partialContent = lastFileMatch[2];
+      
+      // Only set if not yet completed (open-lovable line 2946)
+      if (!processedFiles.has(filePath)) {
+        const fileExt = filePath.split('.').pop();
+        const fileType = (fileExt === 'jsx' || fileExt === 'js') ? 'javascript' :
+                        (fileExt === 'css' || fileExt === 'scss') ? 'css' :
+                        (fileExt === 'json') ? 'json' : 'text';
+        
+        // Set currentFile for streaming file (open-lovable line 2953-2956)
+        console.log(`[Frontend] 📝 STREAMING: ${filePath} (${partialContent.length} chars)`);
+        setCurrentFile({
+          path: filePath,
+          content: partialContent,
+          type: fileType
+        });
+      }
+    } else {
+      // No incomplete file at end - clear currentFile (open-lovable line 2964)
+      setCurrentFile(null);
+    }
+  }, [streamingCode, stage, files]);
 
   const handleSendMessage = async (message) => {
     // Add user message
@@ -118,9 +193,11 @@ export default function StudioPage() {
       case "stage":
         setStage(data.stage);
         if (data.stage === "generating") {
+          console.log(`[Frontend] 🎬 NEW GENERATION STARTED - Clearing state`);
           setStreamingCode("");  // Clear streaming code on new generation
           setCurrentFile(null);
           setCompletedFiles([]);  // Clear completed files on new generation
+          setFiles([]);  // Clear files array for fresh start
         }
         break;
 
@@ -210,7 +287,7 @@ export default function StudioPage() {
 
       case "file_write":
         // Add file to files list AND completed files for chat display
-        console.log(`[Frontend] file_write event: ${data.path}`);
+        console.log(`[Frontend] 📄 file_write event: ${data.path}`);
         
         // Add to completed files array (persisted in chat)
         setCompletedFiles((prev) => [...prev, { path: data.path, content: data.content }]);
@@ -226,6 +303,7 @@ export default function StudioPage() {
                 : f
             );
           }
+          
           // Add new file
           const newFiles = [
             ...prev,
@@ -235,7 +313,14 @@ export default function StudioPage() {
               createdAt: new Date().toISOString(),
             },
           ];
-          console.log(`[Frontend] Total files now: ${newFiles.length}`);
+          console.log(`[Frontend] ✅ Total files now: ${newFiles.length}`);
+          
+          // Auto-switch to Code tab when first file arrives (real-time UX)
+          if (newFiles.length === 1) {
+            console.log(`[Frontend] 🎯 Auto-switching to Code tab`);
+            setActiveTab("code");
+          }
+          
           return newFiles;
         });
         break;
@@ -244,20 +329,32 @@ export default function StudioPage() {
         // All files generated
         console.log(`[Frontend] complete event received, files:`, data.files ? Object.keys(data.files).length : 0);
         
-        // Clear streaming state BUT keep completedFiles (open-lovable approach)
+        // Clear streaming state BUT keep completedFiles and files (open-lovable approach)
         setStreamingCode("");
         setCurrentFile(null);
-        // Don't clear completedFiles - they persist in chat history
+        // Don't clear completedFiles or files - they persist and were already parsed client-side
         
-        if (data.files) {
-          const fileArray = Object.entries(data.files).map(([path, content]) => ({
-            path,
-            content,
-            createdAt: new Date().toISOString(),
-          }));
-          console.log(`[Frontend] Setting ${fileArray.length} files in state`);
-          setFiles(fileArray);
-        }
+        // Only set files if we don't have any (fallback if client-side parsing failed)
+        setFiles(prev => {
+          if (prev.length > 0) {
+            console.log(`[Frontend] ✅ Keeping ${prev.length} client-side parsed files`);
+            return prev; // Keep existing files from client-side parsing
+          }
+          
+          // Fallback: Use backend-parsed files if client-side parsing didn't work
+          if (data.files) {
+            const fileArray = Object.entries(data.files).map(([path, content]) => ({
+              path,
+              content,
+              createdAt: new Date().toISOString(),
+            }));
+            console.log(`[Frontend] ⚠️ Using ${fileArray.length} backend-parsed files (fallback)`);
+            return fileArray;
+          }
+          
+          return prev;
+        });
+        
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id === messageId) {
@@ -273,6 +370,9 @@ export default function StudioPage() {
             return msg;
           })
         );
+        
+        // Set stage to done to stop useEffect processing
+        setStage("done");
         break;
 
       case "error":
@@ -324,6 +424,7 @@ export default function StudioPage() {
             logs={logs}
             previewUrl={previewUrl}
             stage={stage}
+            currentFile={currentFile}
           />
         }
       />

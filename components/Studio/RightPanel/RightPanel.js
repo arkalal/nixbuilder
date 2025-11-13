@@ -1,8 +1,8 @@
 "use client";
 
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { FiCode, FiEye, FiTerminal } from "react-icons/fi";
-import { useState } from "react";
 import FileExplorer from "../FileExplorer/FileExplorer";
 import CodeViewer from "../CodeViewer/CodeViewer";
 import PreviewPanel from "../PreviewPanel/PreviewPanel";
@@ -22,8 +22,20 @@ export default function RightPanel({
   logs,
   previewUrl,
   stage,
+  currentFile, // Streaming file being generated
 }) {
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
+  
+  // Auto-select current streaming file, or latest completed file, or manual selection
+  const selectedFile = React.useMemo(() => {
+    if (stage === "generating") {
+      // Prioritize currentFile being streamed
+      if (currentFile?.path) return currentFile.path;
+      // Otherwise, show latest completed file
+      if (files.length > 0) return files[files.length - 1].path;
+    }
+    return manuallySelectedFile;
+  }, [stage, currentFile, files, manuallySelectedFile]);
 
   return (
     <div className={styles.rightPanel}>
@@ -59,7 +71,7 @@ export default function RightPanel({
               <FileExplorer 
                 files={files}
                 selectedFile={selectedFile}
-                onFileSelect={setSelectedFile}
+                onFileSelect={setManuallySelectedFile}
               />
             </div>
             <div className={styles.codeViewerPanel}>
@@ -67,7 +79,8 @@ export default function RightPanel({
                 files={files} 
                 stage={stage}
                 selectedFile={selectedFile}
-                onFileSelect={setSelectedFile}
+                onFileSelect={setManuallySelectedFile}
+                currentFile={currentFile}
               />
             </div>
           </div>

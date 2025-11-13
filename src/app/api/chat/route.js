@@ -55,9 +55,12 @@ export async function POST(request) {
         // Track accumulated text and file boundaries (open-lovable approach)
         let generatedCode = "";
         let currentFilePath = "";
+        let currentFileContent = "";
         let isInFile = false;
         let isInTag = false;
         let conversationalBuffer = "";
+        let explanationSent = false;
+        const completedFiles = new Map(); // Track completed files in real-time
 
         // Stream the AI response using textStream (open-lovable approach - line 1397)
         console.log("[API] Starting to stream text...");
@@ -69,6 +72,17 @@ export async function POST(request) {
           
           // Send raw stream for code display (open-lovable line 1434-1438)
           send("rawStream", { text, raw: true });
+          
+          // Extract and send explanation IMMEDIATELY when detected (before file generation)
+          if (!explanationSent && generatedCode.includes('<explanation>') && generatedCode.includes('</explanation>')) {
+            const explanationMatch = generatedCode.match(/<explanation>([\s\S]*?)<\/explanation>/);
+            if (explanationMatch) {
+              const explanation = explanationMatch[1].trim();
+              console.log(`[API] 🎯 IMMEDIATE explanation: "${explanation.substring(0, 100)}..."`);
+              send("explanation", { text: explanation });
+              explanationSent = true;
+            }
+          }
           
           // Check for XML tag boundaries (open-lovable line 1409-1431)
           const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
@@ -100,8 +114,9 @@ export async function POST(request) {
             const pathMatch = text.match(/<file path="([^"]+)"/);
             if (pathMatch) {
               currentFilePath = pathMatch[1];
+              currentFileContent = ""; // Reset content accumulator
               isInFile = true;
-              console.log(`[API] File started: ${currentFilePath}`);
+              console.log(`[API] 📄 File STARTED: ${currentFilePath} | isInFile=${isInFile}`);
               
               send("activity", {
                 message: `Generating ${currentFilePath}`,
@@ -111,18 +126,43 @@ export async function POST(request) {
             }
           }
           
-          // Check for file end (send completion message)
-          if (isInFile && text.includes('</file>')) {
-            isInFile = false;
-            console.log(`[API] File completed: ${currentFilePath}`);
+          // Check for file end in CURRENT text chunk - SEND file_write IN REAL-TIME!
+          if (isInFile && text.includes('</file>') && currentFilePath) {
+            console.log(`[API] 🔍 Detected </file> tag for: ${currentFilePath}`);
+            // Extract complete file content from accumulated generatedCode
+            const escapedPath = currentFilePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const fileMatch = generatedCode.match(new RegExp(`<file path="${escapedPath}">([\s\S]*?)</file>`));
             
-            send("activity", {
-              message: `Created ${currentFilePath}`,
-              status: "completed",
-              file: currentFilePath,
-            });
-            
-            currentFilePath = '';
+            if (fileMatch && !completedFiles.has(currentFilePath)) {
+              const completeContent = fileMatch[1].trim();
+              completedFiles.set(currentFilePath, completeContent);
+              
+              console.log(`[API] ✅ File COMPLETED IN REAL-TIME: ${currentFilePath} (${completeContent.length} chars)`);
+              
+              // Write to VFS immediately
+              globalVFS.writeFile(currentFilePath, completeContent);
+              
+              // Send file_write IN REAL-TIME (not after streaming!)
+              console.log(`[API] 📤 Sending file_write event for: ${currentFilePath}`);
+              send("file_write", {
+                path: currentFilePath,
+                content: completeContent,
+              });
+              
+              send("activity", {
+                message: `Created ${currentFilePath}`,
+                status: "completed",
+                file: currentFilePath,
+              });
+              
+              isInFile = false;
+              currentFilePath = '';
+              currentFileContent = '';
+            } else if (!fileMatch) {
+              console.log(`[API] ⚠️ File match FAILED for: ${currentFilePath}`);
+            } else if (completedFiles.has(currentFilePath)) {
+              console.log(`[API] ⚠️ File already completed: ${currentFilePath}`);
+            }
           }
         }
         
@@ -132,41 +172,7 @@ export async function POST(request) {
           send("stream", { content: "\n\n" + conversationalBuffer.trim() });
         }
         
-        // Extract explanation from generated code (open-lovable approach)
-        const explanationMatch = generatedCode.match(/<explanation>([\s\S]*?)<\/explanation>/);
-        if (explanationMatch) {
-          const explanation = explanationMatch[1].trim();
-          console.log(`[API] Extracted explanation: "${explanation.substring(0, 100)}..."`);
-          send("explanation", { text: explanation });
-        }
-        
-        console.log("[API] Stream finished, now parsing files...");
-
-        // Parse ALL files from the generated code (open-lovable approach)
-        const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-        const files = [];
-        let match;
-        
-        console.log(`[API] Parsing files from ${generatedCode.length} chars of generated code`);
-        
-        while ((match = fileRegex.exec(generatedCode)) !== null) {
-          const filePath = match[1];
-          const content = match[2].trim();
-          
-          console.log(`[API] Parsed file: ${filePath} (${content.length} chars)`);
-          
-          // Write to VFS
-          globalVFS.writeFile(filePath, content);
-          files.push({ path: filePath, content });
-          
-          // Send file to frontend
-          send("file_write", {
-            path: filePath,
-            content: content,
-          });
-        }
-
-        console.log(`[API] Total files parsed: ${files.length}`);
+        console.log(`[API] ✅ Stream finished! ${completedFiles.size} files sent in real-time`);
         
         send("activity", {
           message: "Code generation complete",

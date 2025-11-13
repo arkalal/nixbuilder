@@ -1,19 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { FiFile, FiFolder } from "react-icons/fi";
 import styles from "./CodeViewer.module.scss";
 
-export default function CodeViewer({ files, stage, selectedFile: externalSelectedFile, onFileSelect }) {
+export default function CodeViewer({ files, stage, selectedFile: externalSelectedFile, onFileSelect, currentFile }) {
   const [internalSelectedFile, setInternalSelectedFile] = useState(null);
 
   // Use external selectedFile if provided, otherwise use internal state
   const selectedFilePath = externalSelectedFile || internalSelectedFile;
+  
+  // Merge currentFile (streaming) into files array for display (open-lovable approach)
+  const allFiles = React.useMemo(() => {
+    if (!currentFile) return files;
+    
+    // Check if currentFile already exists in files (completed)
+    const existsInFiles = files.some(f => f.path === currentFile.path);
+    
+    if (existsInFiles) {
+      // File completed - show completed version
+      return files;
+    }
+    
+    // File is streaming - add to display with streaming content
+    return [...files, {
+      path: currentFile.path,
+      content: currentFile.content,
+      streaming: true, // Mark as streaming
+      type: currentFile.type
+    }];
+  }, [files, currentFile]);
 
-  if (files.length === 0) {
+  if (allFiles.length === 0) {
     return (
       <div className={styles.emptyState}>
         <div className={styles.emptyIcon}>
@@ -30,13 +51,13 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
   }
 
   // Add filename extraction to each file
-  const filesWithNames = files.map((file) => ({
+  const filesWithNames = allFiles.map((file) => ({
     ...file,
     name: file.path.split("/").pop(),
   }));
 
-  // Find current file object
-  const currentFile = filesWithNames.find(f => f.path === selectedFilePath) || filesWithNames[0];
+  // Find current display file object
+  const displayFile = filesWithNames.find(f => f.path === selectedFilePath) || filesWithNames[filesWithNames.length - 1];
   
   const handleTabClick = (file) => {
     if (onFileSelect) {
@@ -53,10 +74,13 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
           <button
             key={file.path}
             className={`${styles.fileTab} ${
-              currentFile?.path === file.path ? styles.active : ""
-            }`}
+              displayFile?.path === file.path ? styles.active : ""
+            } ${file.streaming ? styles.streaming : ""}`}
             onClick={() => handleTabClick(file)}
           >
+            {file.streaming && (
+              <div className={styles.spinner} />
+            )}
             <FiFile className={styles.fileIcon} />
             <span className={styles.fileName}>{file.name}</span>
           </button>
@@ -66,7 +90,7 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
       <div className={styles.codeContent}>
         <AnimatePresence mode="wait">
           <motion.div
-            key={currentFile?.path}
+            key={displayFile?.path}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -74,7 +98,7 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
             className={styles.codeWrapper}
           >
             <SyntaxHighlighter
-              language={getLanguage(currentFile?.name)}
+              language={getLanguage(displayFile?.name)}
               style={vscDarkPlus}
               showLineNumbers
               customStyle={{
@@ -85,8 +109,11 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
                 fontFamily: "var(--font-mono)",
               }}
             >
-              {currentFile?.content || ""}
+              {displayFile?.content || ""}
             </SyntaxHighlighter>
+            {displayFile?.streaming && (
+              <span className={styles.cursor}>▊</span>
+            )}
           </motion.div>
         </AnimatePresence>
       </div>
