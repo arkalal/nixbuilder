@@ -24,6 +24,11 @@ export default function StudioPage() {
   // Queue to briefly display fast-completing files so each file is visibly streamed
   const displayQueueRef = useRef([]);
   const isDisplayingRef = useRef(false);
+  // Explanation gating to ensure explanation renders BEFORE any code/activity
+  const explanationReceivedRef = useRef(false);
+  const preExplanationRawBufferRef = useRef("");
+  const queuedActivitiesRef = useRef([]);
+  const fallbackExplanationTimerRef = useRef(null);
   // Keep latest files in a ref to avoid adding 'files' to effect deps
   const filesRef = useRef([]);
   useEffect(() => {
@@ -130,29 +135,26 @@ export default function StudioPage() {
       if (!hasClose) {
         const filePath = lastOpenMatch.path;
         const partialContent = remainder;
-        const processedFiles = new Set(filesRef.current.map((f) => f.path));
-        if (!processedFiles.has(filePath)) {
-          const fileExt = filePath.split(".").pop();
-          const fileType =
-            fileExt === "jsx" || fileExt === "js"
-              ? "javascript"
-              : fileExt === "css" || fileExt === "scss"
-              ? "css"
-              : fileExt === "json"
-              ? "json"
-              : "text";
-          console.log(
-            `[Frontend] 📝 STREAMING: ${filePath} (${partialContent.length} chars)`
-          );
-          setCurrentFile({
-            path: filePath,
-            content: partialContent,
-            type: fileType,
-          });
-          // Active streaming takes precedence over any queued displays
-          displayQueueRef.current = [];
-          isDisplayingRef.current = false;
-        }
+        const fileExt = filePath.split(".").pop();
+        const fileType =
+          fileExt === "jsx" || fileExt === "js"
+            ? "javascript"
+            : fileExt === "css" || fileExt === "scss"
+            ? "css"
+            : fileExt === "json"
+            ? "json"
+            : "text";
+        console.log(
+          `[Frontend] 📝 STREAMING: ${filePath} (${partialContent.length} chars)`
+        );
+        setCurrentFile({
+          path: filePath,
+          content: partialContent,
+          type: fileType,
+        });
+        // Active streaming takes precedence over any queued displays
+        displayQueueRef.current = [];
+        isDisplayingRef.current = false;
       } else {
         // Last opened file has closed; clear current streaming indicator
         setCurrentFile(null);
@@ -298,12 +300,21 @@ export default function StudioPage() {
           // Reset display queue
           displayQueueRef.current = [];
           isDisplayingRef.current = false;
+          // Reset explanation gating and buffers
+          explanationReceivedRef.current = false;
+          preExplanationRawBufferRef.current = "";
+          queuedActivitiesRef.current = [];
+          if (fallbackExplanationTimerRef.current) {
+            clearTimeout(fallbackExplanationTimerRef.current);
+            fallbackExplanationTimerRef.current = null;
+          }
         }
         break;
 
       case "explanation":
         // Add explanation text to AI message BEFORE other content (open-lovable approach)
         if (data.text) {
+          explanationReceivedRef.current = true;
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
@@ -317,18 +328,97 @@ export default function StudioPage() {
               return msg;
             })
           );
+          // Flush any buffered raw stream collected before explanation arrived
+          if (preExplanationRawBufferRef.current) {
+            setStreamingCode(
+              (prev) => prev + preExplanationRawBufferRef.current
+            );
+            preExplanationRawBufferRef.current = "";
+          }
+          // Drain queued activities to start building after explanation
+          if (queuedActivitiesRef.current.length > 0) {
+            const queued = queuedActivitiesRef.current.slice();
+            queuedActivitiesRef.current = [];
+            for (const queuedData of queued) {
+              // Re-run the activity handling logic synchronously
+              if (queuedData.status === "in_progress" && queuedData.file) {
+                const fileTypeExt = (
+                  queuedData.file.split(".").pop() || ""
+                ).toLowerCase();
+                const fileType =
+                  fileTypeExt === "jsx" || fileTypeExt === "js"
+                    ? "javascript"
+                    : fileTypeExt === "css" || fileTypeExt === "scss"
+                    ? "css"
+                    : fileTypeExt === "json"
+                    ? "json"
+                    : "text";
+                setCurrentFile({
+                  path: queuedData.file,
+                  content: "",
+                  type: fileType,
+                });
+              } else if (queuedData.status === "completed" && queuedData.file) {
+                setCurrentFile((prev) =>
+                  prev && prev.path === queuedData.file ? null : prev
+                );
+              }
+            }
+          }
+          // Clear any pending fallback timer
+          if (fallbackExplanationTimerRef.current) {
+            clearTimeout(fallbackExplanationTimerRef.current);
+            fallbackExplanationTimerRef.current = null;
+          }
         }
         break;
 
       case "rawStream":
         // Accumulate all raw streaming text (open-lovable approach)
         if (data.text && data.raw) {
+          if (!explanationReceivedRef.current) {
+            // Buffer until explanation is visible; set a short fallback timer in case the model omits it
+            preExplanationRawBufferRef.current += data.text;
+            if (!fallbackExplanationTimerRef.current) {
+              fallbackExplanationTimerRef.current = setTimeout(() => {
+                if (!explanationReceivedRef.current) {
+                  explanationReceivedRef.current = true;
+                  setMessages((prev) =>
+                    prev.map((msg) => {
+                      if (msg.id === messageId) {
+                        return {
+                          ...msg,
+                          content:
+                            "I'll build the requested app and then start streaming the full code files.",
+                          hasExplanation: true,
+                        };
+                      }
+                      return msg;
+                    })
+                  );
+                  // Flush buffered stream
+                  if (preExplanationRawBufferRef.current) {
+                    setStreamingCode(
+                      (prev) => prev + preExplanationRawBufferRef.current
+                    );
+                    preExplanationRawBufferRef.current = "";
+                  }
+                }
+              }, 1000);
+            }
+            return;
+          }
           setStreamingCode((prev) => prev + data.text);
         }
         break;
 
       case "activity":
         // Update activities (dedupe by file/message) and set currentFile on start
+        if (!explanationReceivedRef.current) {
+          // Queue activity to run after explanation is displayed
+          queuedActivitiesRef.current.push({ ...data });
+          return;
+        }
         if (data.status === "in_progress" && data.file) {
           const fileTypeExt = (data.file.split(".").pop() || "").toLowerCase();
           const fileType =
@@ -439,6 +529,12 @@ export default function StudioPage() {
 
         // Stop spinner
         setStage("done");
+        // Ensure timers/queues cleared
+        explanationReceivedRef.current = true;
+        if (fallbackExplanationTimerRef.current) {
+          clearTimeout(fallbackExplanationTimerRef.current);
+          fallbackExplanationTimerRef.current = null;
+        }
 
         // Finalize activities and attach final summary + snapshot of completed files
         setMessages((prev) =>
@@ -466,28 +562,47 @@ export default function StudioPage() {
         setStreamingCode("");
         setCurrentFile(null);
 
-        // Fallback to backend files only if client-side parsing failed
+        // Always MERGE backend files into client-parsed files to ensure completeness
+        // This prevents cases where a few files were parsed client-side, but others were missed.
         setFiles((prev) => {
-          if (prev.length > 0) {
-            console.log(
-              `[Frontend] ✅ Keeping ${prev.length} client-side parsed files`
-            );
-            return prev;
-          }
-          if (data.files) {
-            const fileArray = Object.entries(data.files).map(
-              ([path, content]) => ({
+          const existingByPath = new Map(prev.map((f) => [f.path, f]));
+          const merged = prev.slice();
+          const backendEntries = data.files ? Object.entries(data.files) : [];
+          let added = 0;
+          let updated = 0;
+          for (const [path, content] of backendEntries) {
+            const existing = existingByPath.get(path);
+            if (!existing) {
+              const fileExt = path.split(".").pop();
+              const fileType =
+                fileExt === "jsx" || fileExt === "js"
+                  ? "javascript"
+                  : fileExt === "css" || fileExt === "scss"
+                  ? "css"
+                  : fileExt === "json"
+                  ? "json"
+                  : "text";
+              merged.push({
                 path,
                 content,
+                type: fileType,
                 createdAt: new Date().toISOString(),
-              })
-            );
-            console.log(
-              `[Frontend] ⚠️ Using ${fileArray.length} backend-parsed files (fallback)`
-            );
-            return fileArray;
+                completed: true,
+              });
+              added++;
+            } else if (existing.content !== content) {
+              // Update stale content if backend has the authoritative final version
+              existing.content = content;
+              existing.updatedAt = new Date().toISOString();
+              updated++;
+            }
           }
-          return prev;
+          if (backendEntries.length > 0) {
+            console.log(
+              `[Frontend] ✅ Finalized files: kept ${prev.length}, added ${added}, updated ${updated}`
+            );
+          }
+          return merged;
         });
 
         // Ensure the assistant message has some human-readable completion text

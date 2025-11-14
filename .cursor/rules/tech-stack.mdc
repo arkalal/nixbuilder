@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+
+# Tech Stack
+
+- NextJS v16 latest version with app router - Full stack (Frontend and Backend).
+- DB - MongoDB
+- OpenRouter APIs and Vercel AI SDK (For AI Integration)
+- Vercel for deployment.
+- Pure JSX and SCSS, ShadCN UI, framer, framer-motion and other packages as per requirement for building advanced/Modern UI and Smooth slick animations.
+- React-icons for icons preferable.
+- NextAuth v5 or Latest version for user authentication.
