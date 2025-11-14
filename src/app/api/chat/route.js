@@ -7,24 +7,28 @@ import { globalVFS } from "../../../../lib/vfs";
 export async function POST(request) {
   try {
     console.log("[API] Chat request received");
-    
+
     // Check authentication
     const session = await getServerSession(authOptions);
-    console.log("[API] Session check:", session ? "✓ Authenticated" : "✗ Not authenticated");
-    
+    console.log(
+      "[API] Session check:",
+      session ? "✓ Authenticated" : "✗ Not authenticated"
+    );
+
     if (!session) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
-    const { message, model, temperature } = body;
-    console.log("[API] Request:", { message: message.substring(0, 50) + "...", model, temperature });
+    const { message, model, temperature, history } = body;
+    console.log("[API] Request:", {
+      message: message.substring(0, 50) + "...",
+      model,
+      temperature,
+    });
 
     if (!message || typeof message !== "string") {
-      return Response.json(
-        { error: "Message is required" },
-        { status: 400 }
-      );
+      return Response.json({ error: "Message is required" }, { status: 400 });
     }
 
     // Create SSE stream
@@ -35,7 +39,7 @@ export async function POST(request) {
     (async () => {
       try {
         console.log("[API] Starting generation...");
-        
+
         // Send stage update
         send("stage", { stage: "generating" });
         send("activity", {
@@ -43,12 +47,41 @@ export async function POST(request) {
           status: "in_progress",
         });
 
+        // Build project context for iterative edits
+        const existingFiles = globalVFS.getAllFiles();
+        const filePaths = Object.keys(existingFiles);
+        const keyFiles = [
+          "app/page.jsx",
+          "app/layout.jsx",
+          "app/globals.scss",
+          "package.json",
+          "next.config.mjs",
+          "jsconfig.json",
+        ];
+        const keyContents = keyFiles
+          .filter((p) => existingFiles[p])
+          .map((p) => `--- ${p} ---\n${existingFiles[p]}`)
+          .join("\n\n");
+        const historyText = Array.isArray(history)
+          ? `\n\nCONVERSATION HISTORY (latest first)\n----------------------------------\n${[
+              ...history,
+            ]
+              .slice(-6)
+              .reverse()
+              .map((h) => `${h.role.toUpperCase()}: ${h.content || ""}`)
+              .join("\n")}`
+          : "";
+        const context = `Existing files (${filePaths.length}):\n${filePaths
+          .map((p) => `- ${p}`)
+          .join("\n")}\n\n${keyContents}${historyText}`;
+
         // Generate code with streaming
         console.log("[API] Calling generateCode...");
         const result = await generateCode(message, {
           model,
           temperature,
           vfs: globalVFS,
+          context,
         });
         console.log("[API] generateCode returned");
 
@@ -59,58 +92,90 @@ export async function POST(request) {
         let isInTag = false;
         let conversationalBuffer = "";
         let explanationSent = false;
+        let inExplanation = false;
+        let explanationBuffer = "";
         // Rolling buffer to detect multiple <file> openings across chunk boundaries
         let fileTagBuffer = "";
 
         // Stream the AI response using textStream (open-lovable approach - line 1397)
         console.log("[API] Starting to stream text...");
         for await (const textPart of result.textStream) {
-          const text = textPart || '';
-          
+          const text = textPart || "";
+
           // Accumulate ALL text for final parsing
           generatedCode += text;
-          
-          // Send raw stream for code display (open-lovable line 1434-1438)
-          send("rawStream", { text, raw: true });
-          
-          // Extract and send explanation IMMEDIATELY when detected (before file generation)
-          if (!explanationSent && generatedCode.includes('<explanation>') && generatedCode.includes('</explanation>')) {
-            const explanationMatch = generatedCode.match(/<explanation>([\s\S]*?)<\/explanation>/);
-            if (explanationMatch) {
-              const explanation = explanationMatch[1].trim();
-              console.log(`[API] 🎯 IMMEDIATE explanation: "${explanation.substring(0, 100)}..."`);
-              send("explanation", { text: explanation });
-              explanationSent = true;
+
+          // Detect explanation open/close tags across chunks and buffer until closure
+          if (!explanationSent) {
+            const combined = explanationBuffer + text;
+            // If entering explanation
+            if (!inExplanation && combined.includes("<explanation>")) {
+              inExplanation = true;
+            }
+            if (inExplanation) {
+              explanationBuffer = combined;
+              // If we have closing tag now, extract and send
+              if (combined.includes("</explanation>")) {
+                const m = combined.match(
+                  /<explanation>([\s\S]*?)<\/explanation>/
+                );
+                const explanationText = m ? m[1].trim() : "";
+                console.log(
+                  `[API] 🎯 IMMEDIATE explanation: "${explanationText.substring(
+                    0,
+                    100
+                  )}..."`
+                );
+                send("explanation", { text: explanationText });
+                explanationSent = true;
+                inExplanation = false;
+              } else {
+                // Still inside explanation, skip raw streaming for this chunk
+                continue;
+              }
             }
           }
-          
+
+          // Now stream raw text for code display
+          send("rawStream", { text, raw: true });
+
           // Check for XML tag boundaries (open-lovable line 1409-1431)
-          const hasOpenTag = /<(file|package|packages|explanation|command|structure|template)\b/.test(text);
-          const hasCloseTag = /<\/(file|package|packages|explanation|command|structure|template)>/.test(text);
-          
+          const hasOpenTag =
+            /<(file|package|packages|explanation|command|structure|template)\b/.test(
+              text
+            );
+          const hasCloseTag =
+            /<\/(file|package|packages|explanation|command|structure|template)>/.test(
+              text
+            );
+
           if (hasOpenTag) {
             // Send any buffered conversational text before the tag
             if (conversationalBuffer.trim() && !isInTag) {
-              console.log(`[API] Sending conversational text: "${conversationalBuffer.trim().substring(0, 50)}..."`);
+              console.log(
+                `[API] Sending conversational text: "${conversationalBuffer
+                  .trim()
+                  .substring(0, 50)}..."`
+              );
               send("stream", { content: conversationalBuffer.trim() });
-              conversationalBuffer = '';
+              conversationalBuffer = "";
             }
             isInTag = true;
           }
-          
+
           if (hasCloseTag) {
             isInTag = false;
             // Clear any XML content that leaked into conversational buffer
-            conversationalBuffer = '';
+            conversationalBuffer = "";
           }
-          
+
           // If we're not in a tag AND no tags in this chunk, buffer as conversational text
           if (!isInTag && !hasOpenTag && !hasCloseTag) {
             conversationalBuffer += text;
           }
-          
+
           // Check for ALL file starts in this chunk using a small rolling buffer
-          const searchText = (fileTagBuffer + text);
+          const searchText = fileTagBuffer + text;
           const openRegex = /<file path="([^"]+)">/g;
           let openMatch;
           while ((openMatch = openRegex.exec(searchText)) !== null) {
@@ -125,44 +190,51 @@ export async function POST(request) {
           }
           // Keep last 100 chars to catch split tags
           fileTagBuffer = searchText.slice(-100);
-          
+
           // Check for file end (for activity progress only)
-          if (isInFile && text.includes('</file>') && currentFilePath) {
+          if (isInFile && text.includes("</file>") && currentFilePath) {
             console.log(`[API] ✅ File COMPLETED: ${currentFilePath}`);
-            
+
             send("activity", {
               message: `Created ${currentFilePath}`,
               status: "completed",
               file: currentFilePath,
             });
-            
+
             isInFile = false;
-            currentFilePath = '';
+            currentFilePath = "";
           }
         }
-        
+
         console.log(`[API] ✅ Stream finished! Parsing files for VFS...`);
-        
+
         // Store final conversational text to send with complete event
         const finalConversation = conversationalBuffer.trim();
         if (finalConversation) {
-          console.log(`[API] Final conversational text saved for complete event: "${finalConversation.substring(0, 100)}..."`);
+          console.log(
+            `[API] Final conversational text saved for complete event: "${finalConversation.substring(
+              0,
+              100
+            )}..."`
+          );
         }
-        
+
         // Parse files from generatedCode and write to VFS (for backend storage/export)
         const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
         let fileMatch;
         const parsedFiles = {};
-        
+
         while ((fileMatch = fileRegex.exec(generatedCode)) !== null) {
           const filePath = fileMatch[1];
           const fileContent = fileMatch[2].trim();
           parsedFiles[filePath] = fileContent;
           globalVFS.writeFile(filePath, fileContent);
         }
-        
-        console.log(`[API] ✅ Parsed ${Object.keys(parsedFiles).length} files to VFS`);
-        
+
+        console.log(
+          `[API] ✅ Parsed ${Object.keys(parsedFiles).length} files to VFS`
+        );
+
         send("activity", {
           message: "Code generation complete",
           status: "completed",
@@ -172,9 +244,9 @@ export async function POST(request) {
         const allFiles = globalVFS.getAllFiles();
         const fileCount = Object.keys(allFiles).length;
         console.log(`[API] Sending ${fileCount} files in complete event`);
-        send("complete", { 
+        send("complete", {
           files: allFiles,
-          finalMessage: finalConversation || undefined // Send final text with complete
+          finalMessage: finalConversation || undefined, // Send final text with complete
         });
         send("stage", { stage: "done" });
       } catch (error) {
@@ -192,9 +264,6 @@ export async function POST(request) {
     return createSSEResponse(stream);
   } catch (error) {
     console.error("Chat route error:", error);
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

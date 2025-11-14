@@ -24,6 +24,13 @@ export default function StudioPage() {
   // Queue to briefly display fast-completing files so each file is visibly streamed
   const displayQueueRef = useRef([]);
   const isDisplayingRef = useRef(false);
+  // Keep latest files in a ref to avoid adding 'files' to effect deps
+  const filesRef = useRef([]);
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+  // Deduplicate last queued completed file for brief display
+  const lastQueuedPathRef = useRef(null);
 
   const processDisplayQueue = useCallback(() => {
     if (isDisplayingRef.current) return;
@@ -46,25 +53,26 @@ export default function StudioPage() {
     }
   }, []);
 
-  // Parse files from streamingCode in real-time (EXACT open-lovable approach - lines 2874-2968)
+  // Parse files from streamingCode in real-time (open-lovable approach, refactored to avoid loops)
   useEffect(() => {
     if (!streamingCode || stage !== "generating") return;
 
-    // Extract ALL completed files from accumulated stream (open-lovable line 2889)
+    // Extract ALL completed files from accumulated stream
     const fileRegex = /<file path="([^"]+)">([^]*?)<\/file>/g;
     let match;
-    const newFiles = [];
-
-    // Build processedFiles Set from CURRENT state (open-lovable line 2891)
-    const processedFiles = new Set(files.map((f) => f.path));
-
+    const matches = [];
     while ((match = fileRegex.exec(streamingCode)) !== null) {
-      const filePath = match[1];
-      const fileContent = match[2].trim();
+      matches.push({ path: match[1], content: match[2].trim() });
+    }
 
-      // Only add if we haven't processed this file yet (open-lovable line 2898)
-      if (!processedFiles.has(filePath)) {
-        const fileExt = filePath.split(".").pop();
+    // Apply updates/additions using functional update to avoid dependency loops
+    let completedEntries = [];
+    setFiles((prev) => {
+      if (matches.length === 0) return prev;
+      const out = prev.slice();
+      const indexByPath = new Map(out.map((f, i) => [f.path, i]));
+      for (const m of matches) {
+        const fileExt = m.path.split(".").pop();
         const fileType =
           fileExt === "jsx" || fileExt === "js"
             ? "javascript"
@@ -73,37 +81,34 @@ export default function StudioPage() {
             : fileExt === "json"
             ? "json"
             : "text";
-
-        // Add new file IMMEDIATELY (open-lovable line 2923-2929)
-        console.log(
-          `[Frontend] ✅ File completed: ${filePath} - Adding to files array`
-        );
-        newFiles.push({
-          path: filePath,
-          content: fileContent,
-          type: fileType,
-          createdAt: new Date().toISOString(),
-          completed: true,
-        });
-        processedFiles.add(filePath);
+        const idx = indexByPath.get(m.path);
+        if (typeof idx === "number") {
+          // Update
+          out[idx] = {
+            ...out[idx],
+            content: m.content,
+            type: fileType,
+            updatedAt: new Date().toISOString(),
+            edited: true,
+          };
+        } else {
+          // Add
+          out.push({
+            path: m.path,
+            content: m.content,
+            type: fileType,
+            createdAt: new Date().toISOString(),
+            completed: true,
+          });
+        }
+        completedEntries.push({ path: m.path, content: m.content });
       }
-    }
+      return out;
+    });
 
-    // Add completed files to state IMMEDIATELY (open-lovable does this synchronously)
-    if (newFiles.length > 0) {
-      console.log(
-        `[Frontend] 📂 Adding ${newFiles.length} completed files immediately`
-      );
-      setFiles((prev) => [...prev, ...newFiles]);
-      setCompletedFiles((prev) => [
-        ...prev,
-        ...newFiles.map((f) => ({ path: f.path, content: f.content })),
-      ]);
-
-      // Auto-switch to Code tab on first file
-      if (files.length === 0) {
-        setActiveTab("code");
-      }
+    if (completedEntries.length > 0) {
+      setCompletedFiles((prev) => [...prev, ...completedEntries]);
+      setActiveTab((prev) => prev || "code");
     }
 
     // Determine current streaming file by finding the LAST opened <file> that has no closing </file> yet
@@ -125,6 +130,7 @@ export default function StudioPage() {
       if (!hasClose) {
         const filePath = lastOpenMatch.path;
         const partialContent = remainder;
+        const processedFiles = new Set(filesRef.current.map((f) => f.path));
         if (!processedFiles.has(filePath)) {
           const fileExt = filePath.split(".").pop();
           const fileType =
@@ -148,23 +154,38 @@ export default function StudioPage() {
           isDisplayingRef.current = false;
         }
       } else {
-        // The last opened file has already closed; fall through to queue logic
-        // (currentFile will be cleared below if applicable)
-        if (!newFiles.length) {
-          setCurrentFile(null);
-        }
+        // Last opened file has closed; clear current streaming indicator
+        setCurrentFile(null);
       }
     } else {
-      // No incomplete file - queue every newly completed file for brief display (ensures visibility per file)
-      if (newFiles.length > 0) {
-        displayQueueRef.current.push(...newFiles);
-        processDisplayQueue();
+      // No incomplete file - queue the most recent completed file for brief display (ensures visibility)
+      const lastCompleted =
+        matches.length > 0 ? matches[matches.length - 1] : null;
+      if (lastCompleted) {
+        const fileExt = lastCompleted.path.split(".").pop();
+        const fileType =
+          fileExt === "jsx" || fileExt === "js"
+            ? "javascript"
+            : fileExt === "css" || fileExt === "scss"
+            ? "css"
+            : fileExt === "json"
+            ? "json"
+            : "text";
+        if (lastQueuedPathRef.current !== lastCompleted.path) {
+          displayQueueRef.current.push({
+            path: lastCompleted.path,
+            content: lastCompleted.content,
+            type: fileType,
+          });
+          lastQueuedPathRef.current = lastCompleted.path;
+          processDisplayQueue();
+        }
       } else {
         // No active streaming and no new completed files - clear currentFile
         setCurrentFile(null);
       }
     }
-  }, [streamingCode, stage, files, processDisplayQueue]);
+  }, [streamingCode, stage, processDisplayQueue]);
 
   const handleSendMessage = async (message) => {
     // Add user message
@@ -189,10 +210,15 @@ export default function StudioPage() {
 
     try {
       // Call /api/chat with SSE
+      // Build compact conversation history for iterative edits (last 8 messages)
+      const history = messages
+        .slice(-8)
+        .map((m) => ({ role: m.role, content: m.content }));
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, model: selectedModel }),
+        body: JSON.stringify({ message, model: selectedModel, history }),
       });
 
       if (!response.ok) {
@@ -267,8 +293,8 @@ export default function StudioPage() {
           console.log(`[Frontend] 🎬 NEW GENERATION STARTED - Clearing state`);
           setStreamingCode(""); // Clear streaming code on new generation
           setCurrentFile(null);
-          setCompletedFiles([]); // Clear completed files on new generation
-          setFiles([]); // Clear files array for fresh start
+          setCompletedFiles([]); // Clear per-generation left panel blocks only
+          // IMPORTANT: Do NOT clear files; we keep existing project for iterative edits
           // Reset display queue
           displayQueueRef.current = [];
           isDisplayingRef.current = false;
@@ -411,41 +437,43 @@ export default function StudioPage() {
           data.files ? Object.keys(data.files).length : 0
         );
 
-        // Set stage to done to stop spinner
+        // Stop spinner
         setStage("done");
 
-        // Mark any in-progress activities as completed and attach finalMessage to render AFTER code blocks
+        // Finalize activities and attach final summary + snapshot of completed files
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
             const activities = (msg.activities || []).map((a) =>
               a.status === "in_progress" ? { ...a, status: "completed" } : a
             );
+            const snapshot =
+              completedFiles && completedFiles.length
+                ? [...completedFiles]
+                : msg.completedFilesSnapshot || [];
             return {
               ...msg,
               activities,
               postContent: data.finalMessage
                 ? String(data.finalMessage)
-                : undefined,
+                : msg.postContent,
+              completedFilesSnapshot: snapshot,
             };
           })
         );
 
-        // Clear streaming state BUT keep completedFiles and files (open-lovable approach)
+        // Clear streaming state BUT keep files
         setStreamingCode("");
         setCurrentFile(null);
-        // Don't clear completedFiles or files - they persist and were already parsed client-side
 
-        // Only set files if we don't have any (fallback if client-side parsing failed)
+        // Fallback to backend files only if client-side parsing failed
         setFiles((prev) => {
           if (prev.length > 0) {
             console.log(
               `[Frontend] ✅ Keeping ${prev.length} client-side parsed files`
             );
-            return prev; // Keep existing files from client-side parsing
+            return prev;
           }
-
-          // Fallback: Use backend-parsed files if client-side parsing didn't work
           if (data.files) {
             const fileArray = Object.entries(data.files).map(
               ([path, content]) => ({
@@ -459,14 +487,13 @@ export default function StudioPage() {
             );
             return fileArray;
           }
-
           return prev;
         });
 
+        // Ensure the assistant message has some human-readable completion text
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id === messageId) {
-              // Only set default content if AI didn't stream conversational text
               const hasConversationalText =
                 msg.content && msg.content !== "Analyzing your request...";
               return {
@@ -482,8 +509,6 @@ export default function StudioPage() {
           })
         );
 
-        // Set stage to done to stop useEffect processing
-        setStage("done");
         break;
 
       case "error":

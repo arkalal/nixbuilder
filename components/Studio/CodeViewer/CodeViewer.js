@@ -1,18 +1,24 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { FiFile, FiFolder } from "react-icons/fi";
 import styles from "./CodeViewer.module.scss";
 
-export default function CodeViewer({ files, stage, selectedFile: externalSelectedFile, onFileSelect, currentFile }) {
+export default function CodeViewer({
+  files,
+  stage,
+  selectedFile: externalSelectedFile,
+  onFileSelect,
+  currentFile,
+}) {
   const [internalSelectedFile, setInternalSelectedFile] = useState(null);
 
   // Use external selectedFile if provided, otherwise use internal state
   const selectedFilePath = externalSelectedFile || internalSelectedFile;
-  
+
   // Merge currentFile (streaming) into files array for display
   const allFiles = React.useMemo(() => {
     if (!currentFile) return files;
@@ -41,6 +47,21 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
     ];
   }, [files, currentFile]);
 
+  const scrollRef = useRef(null);
+  const displayFile =
+    allFiles.find((f) => f.path === selectedFilePath) ||
+    allFiles[allFiles.length - 1];
+  const depPath = displayFile?.path;
+  const depContent = displayFile?.content;
+  const depStreaming = !!displayFile?.streaming;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (depStreaming) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [depPath, depContent, depStreaming]);
+
   if (allFiles.length === 0) {
     return (
       <div className={styles.emptyState}>
@@ -63,9 +84,6 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
     name: file.path.split("/").pop(),
   }));
 
-  // Find current display file object
-  const displayFile = filesWithNames.find(f => f.path === selectedFilePath) || filesWithNames[filesWithNames.length - 1];
-  
   const handleTabClick = (file) => {
     if (onFileSelect) {
       onFileSelect(file.path);
@@ -85,16 +103,14 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
             } ${file.streaming ? styles.streaming : ""}`}
             onClick={() => handleTabClick(file)}
           >
-            {file.streaming && (
-              <div className={styles.spinner} />
-            )}
+            {file.streaming && <div className={styles.spinner} />}
             <FiFile className={styles.fileIcon} />
             <span className={styles.fileName}>{file.name}</span>
           </button>
         ))}
       </div>
 
-      <div className={styles.codeContent}>
+      <div className={styles.codeContent} ref={scrollRef}>
         <AnimatePresence mode="wait">
           <motion.div
             key={displayFile?.path}
@@ -118,9 +134,7 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
             >
               {displayFile?.content || ""}
             </SyntaxHighlighter>
-            {displayFile?.streaming && (
-              <span className={styles.cursor}>▊</span>
-            )}
+            {displayFile?.streaming && <span className={styles.cursor}>▊</span>}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -130,7 +144,7 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
 
 function getLanguage(filename) {
   if (!filename) return "javascript";
-  
+
   const ext = filename.split(".").pop();
   const langMap = {
     js: "javascript",
@@ -143,6 +157,6 @@ function getLanguage(filename) {
     html: "html",
     md: "markdown",
   };
-  
+
   return langMap[ext] || "javascript";
 }
