@@ -98,11 +98,12 @@ export default function MessageTimeline({ messages, streamingCode, currentFile, 
             {/* Show streaming code for the last AI message (open-lovable style) */}
             {message.role === "assistant" && 
              index === messages.length - 1 && 
-             (streamingCode || currentFile || completedFiles.length > 0) && (
+             (streamingCode || currentFile || completedFiles.length > 0 || message.postContent) && (
               <StreamingCodeDisplay 
                 streamingCode={streamingCode}
                 currentFile={currentFile}
                 completedFiles={completedFiles}
+                postContent={message.postContent}
               />
             )}
           </motion.div>

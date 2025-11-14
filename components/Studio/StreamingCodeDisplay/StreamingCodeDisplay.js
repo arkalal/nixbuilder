@@ -5,7 +5,7 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { FiCheck } from "react-icons/fi";
 import styles from "./StreamingCodeDisplay.module.scss";
 
-export default function StreamingCodeDisplay({ streamingCode, currentFile, completedFiles = [] }) {
+export default function StreamingCodeDisplay({ streamingCode, currentFile, completedFiles = [], postContent }) {
   // Get file type badge color
   const getFileTypeBadge = (type) => {
     switch (type) {
@@ -30,22 +30,6 @@ export default function StreamingCodeDisplay({ streamingCode, currentFile, compl
 
   return (
     <div className={styles.streamingCodeDisplay}>
-      {/* Current File Being Generated */}
-      {currentFile && (
-        <div className={styles.fileBlock}>
-          <div className={styles.fileHeader}>
-            <div className={styles.fileInfo}>
-              <div className={styles.spinner} />
-              <span className={styles.fileName}>{currentFile.path}</span>
-              {(() => {
-                const badge = getFileTypeBadge(currentFile.type);
-                return <span className={`${styles.fileBadge} ${badge.className}`}>{badge.label}</span>;
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Completed Files (persisted, not cleared) */}
       {completedFiles.map((file, idx) => (
         <div key={idx} className={styles.completedFileBlock}>
@@ -79,6 +63,22 @@ export default function StreamingCodeDisplay({ streamingCode, currentFile, compl
         </div>
       ))}
 
+      {/* Current File Being Generated - shown after previous completed blocks */}
+      {currentFile && (
+        <div className={styles.fileBlock}>
+          <div className={styles.fileHeader}>
+            <div className={styles.fileInfo}>
+              <div className={styles.spinner} />
+              <span className={styles.fileName}>{currentFile.path}</span>
+              {(() => {
+                const badge = getFileTypeBadge(currentFile.type);
+                return <span className={`${styles.fileBadge} ${badge.className}`}>{badge.label}</span>;
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* AI Response Stream */}
       {streamingCode && (
         <div className={styles.streamBlock}>
@@ -103,6 +103,17 @@ export default function StreamingCodeDisplay({ streamingCode, currentFile, compl
             </SyntaxHighlighter>
             <span className={styles.cursor} />
           </div>
+        </div>
+      )}
+
+      {/* Final AI text after all files (appended at the very end) */}
+      {postContent && (
+        <div className={styles.finalText}>
+          {String(postContent)
+            .split('\n')
+            .map((line, i) => (
+              <div key={i}>{line || '\u00A0'}</div>
+            ))}
         </div>
       )}
     </div>

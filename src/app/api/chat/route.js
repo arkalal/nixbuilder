@@ -55,12 +55,12 @@ export async function POST(request) {
         // Track accumulated text and file boundaries (open-lovable approach)
         let generatedCode = "";
         let currentFilePath = "";
-        let currentFileContent = "";
         let isInFile = false;
         let isInTag = false;
         let conversationalBuffer = "";
         let explanationSent = false;
-        const completedFiles = new Map(); // Track completed files in real-time
+        // Rolling buffer to detect multiple <file> openings across chunk boundaries
+        let fileTagBuffer = "";
 
         // Stream the AI response using textStream (open-lovable approach - line 1397)
         console.log("[API] Starting to stream text...");
@@ -109,81 +109,73 @@ export async function POST(request) {
             conversationalBuffer += text;
           }
           
-          // Check for file start (for progress updates)
-          if (text.includes('<file path="')) {
-            const pathMatch = text.match(/<file path="([^"]+)"/);
-            if (pathMatch) {
-              currentFilePath = pathMatch[1];
-              currentFileContent = ""; // Reset content accumulator
-              isInFile = true;
-              console.log(`[API] 📄 File STARTED: ${currentFilePath} | isInFile=${isInFile}`);
-              
-              send("activity", {
-                message: `Generating ${currentFilePath}`,
-                status: "in_progress",
-                file: currentFilePath,
-              });
-            }
+          // Check for ALL file starts in this chunk using a small rolling buffer
+          const searchText = (fileTagBuffer + text);
+          const openRegex = /<file path="([^"]+)">/g;
+          let openMatch;
+          while ((openMatch = openRegex.exec(searchText)) !== null) {
+            currentFilePath = openMatch[1];
+            isInFile = true;
+            console.log(`[API] 📄 File STARTED: ${currentFilePath}`);
+            send("activity", {
+              message: `Generating ${currentFilePath}`,
+              status: "in_progress",
+              file: currentFilePath,
+            });
           }
+          // Keep last 100 chars to catch split tags
+          fileTagBuffer = searchText.slice(-100);
           
-          // Check for file end in CURRENT text chunk - SEND file_write IN REAL-TIME!
+          // Check for file end (for activity progress only)
           if (isInFile && text.includes('</file>') && currentFilePath) {
-            console.log(`[API] 🔍 Detected </file> tag for: ${currentFilePath}`);
-            // Extract complete file content from accumulated generatedCode
-            const escapedPath = currentFilePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const fileMatch = generatedCode.match(new RegExp(`<file path="${escapedPath}">([\s\S]*?)</file>`));
+            console.log(`[API] ✅ File COMPLETED: ${currentFilePath}`);
             
-            if (fileMatch && !completedFiles.has(currentFilePath)) {
-              const completeContent = fileMatch[1].trim();
-              completedFiles.set(currentFilePath, completeContent);
-              
-              console.log(`[API] ✅ File COMPLETED IN REAL-TIME: ${currentFilePath} (${completeContent.length} chars)`);
-              
-              // Write to VFS immediately
-              globalVFS.writeFile(currentFilePath, completeContent);
-              
-              // Send file_write IN REAL-TIME (not after streaming!)
-              console.log(`[API] 📤 Sending file_write event for: ${currentFilePath}`);
-              send("file_write", {
-                path: currentFilePath,
-                content: completeContent,
-              });
-              
-              send("activity", {
-                message: `Created ${currentFilePath}`,
-                status: "completed",
-                file: currentFilePath,
-              });
-              
-              isInFile = false;
-              currentFilePath = '';
-              currentFileContent = '';
-            } else if (!fileMatch) {
-              console.log(`[API] ⚠️ File match FAILED for: ${currentFilePath}`);
-            } else if (completedFiles.has(currentFilePath)) {
-              console.log(`[API] ⚠️ File already completed: ${currentFilePath}`);
-            }
+            send("activity", {
+              message: `Created ${currentFilePath}`,
+              status: "completed",
+              file: currentFilePath,
+            });
+            
+            isInFile = false;
+            currentFilePath = '';
           }
         }
         
-        // Send any remaining conversational text (open-lovable line 1509-1514)
-        if (conversationalBuffer.trim()) {
-          console.log(`[API] Sending final conversational text: "${conversationalBuffer.trim().substring(0, 100)}..."`);
-          send("stream", { content: "\n\n" + conversationalBuffer.trim() });
+        console.log(`[API] ✅ Stream finished! Parsing files for VFS...`);
+        
+        // Store final conversational text to send with complete event
+        const finalConversation = conversationalBuffer.trim();
+        if (finalConversation) {
+          console.log(`[API] Final conversational text saved for complete event: "${finalConversation.substring(0, 100)}..."`);
         }
         
-        console.log(`[API] ✅ Stream finished! ${completedFiles.size} files sent in real-time`);
+        // Parse files from generatedCode and write to VFS (for backend storage/export)
+        const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
+        let fileMatch;
+        const parsedFiles = {};
+        
+        while ((fileMatch = fileRegex.exec(generatedCode)) !== null) {
+          const filePath = fileMatch[1];
+          const fileContent = fileMatch[2].trim();
+          parsedFiles[filePath] = fileContent;
+          globalVFS.writeFile(filePath, fileContent);
+        }
+        
+        console.log(`[API] ✅ Parsed ${Object.keys(parsedFiles).length} files to VFS`);
         
         send("activity", {
           message: "Code generation complete",
           status: "completed",
         });
 
-        // Send final files
+        // Send final files (for fallback if client-side parsing fails)
         const allFiles = globalVFS.getAllFiles();
         const fileCount = Object.keys(allFiles).length;
         console.log(`[API] Sending ${fileCount} files in complete event`);
-        send("complete", { files: allFiles });
+        send("complete", { 
+          files: allFiles,
+          finalMessage: finalConversation || undefined // Send final text with complete
+        });
         send("stage", { stage: "done" });
       } catch (error) {
         console.error("Chat API error:", error);

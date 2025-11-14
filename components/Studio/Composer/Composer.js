@@ -11,8 +11,16 @@ import styles from "./Composer.module.scss";
 export default function Composer({ messages, stage, onSendMessage, selectedModel, onModelChange, streamingCode, currentFile, completedFiles }) {
   const [inputValue, setInputValue] = useState("");
   const textareaRef = useRef(null);
+  const timelineRef = useRef(null);
 
   const isProcessing = stage !== "idle" && stage !== "done";
+
+  // Auto-scroll timeline as streaming progresses
+  useEffect(() => {
+    const el = timelineRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, streamingCode, currentFile, completedFiles, stage]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -57,7 +65,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
         <StageIndicator stage={stage} />
       </div>
 
-      <div className={styles.timeline}>
+      <div className={styles.timeline} ref={timelineRef}>
         <MessageTimeline 
           messages={messages}
           streamingCode={streamingCode}

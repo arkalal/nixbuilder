@@ -13,25 +13,32 @@ export default function CodeViewer({ files, stage, selectedFile: externalSelecte
   // Use external selectedFile if provided, otherwise use internal state
   const selectedFilePath = externalSelectedFile || internalSelectedFile;
   
-  // Merge currentFile (streaming) into files array for display (open-lovable approach)
+  // Merge currentFile (streaming) into files array for display
   const allFiles = React.useMemo(() => {
     if (!currentFile) return files;
-    
-    // Check if currentFile already exists in files (completed)
-    const existsInFiles = files.some(f => f.path === currentFile.path);
-    
-    if (existsInFiles) {
-      // File completed - show completed version
-      return files;
+
+    const index = files.findIndex((f) => f.path === currentFile.path);
+    if (index >= 0) {
+      // Show streaming state and partial content on the existing tab
+      const augmented = files.slice();
+      augmented[index] = {
+        ...augmented[index],
+        content: currentFile.content,
+        streaming: true,
+      };
+      return augmented;
     }
-    
-    // File is streaming - add to display with streaming content
-    return [...files, {
-      path: currentFile.path,
-      content: currentFile.content,
-      streaming: true, // Mark as streaming
-      type: currentFile.type
-    }];
+
+    // File is new and streaming - add to display with streaming content
+    return [
+      ...files,
+      {
+        path: currentFile.path,
+        content: currentFile.content,
+        streaming: true,
+        type: currentFile.type,
+      },
+    ];
   }, [files, currentFile]);
 
   if (allFiles.length === 0) {
