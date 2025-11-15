@@ -17,6 +17,12 @@ export default function StudioPage() {
     "anthropic/claude-3.5-sonnet"
   );
 
+  // Sandbox state
+  const [machineId, setMachineId] = useState(null);
+  const [projectId] = useState(`project-${Date.now()}`); // Temporary until projects CRUD is implemented
+  const logsReaderRef = useRef(null);
+  const sandboxBusyRef = useRef(false); // prevents re-entrant sandbox runs
+
   // Open-lovable style streaming state
   const [streamingCode, setStreamingCode] = useState("");
   const [currentFile, setCurrentFile] = useState(null); // { path, content, type }
@@ -36,6 +42,12 @@ export default function StudioPage() {
   }, [files]);
   // Deduplicate last queued completed file for brief display
   const lastQueuedPathRef = useRef(null);
+  // Monotonic ID generator to avoid duplicate React keys when events happen within the same millisecond
+  const idCounterRef = useRef(0);
+  const generateId = () => {
+    idCounterRef.current += 1;
+    return `${Date.now()}-${idCounterRef.current}`;
+  };
 
   const processDisplayQueue = useCallback(() => {
     if (isDisplayingRef.current) return;
@@ -189,10 +201,286 @@ export default function StudioPage() {
     }
   }, [streamingCode, stage, processDisplayQueue]);
 
+  // Sandbox lifecycle functions
+  const startSandboxLogs = useCallback(async (machId) => {
+    if (logsReaderRef.current) return; // Already streaming
+
+    try {
+      console.log(`[Studio] Starting logs stream for machine: ${machId}`);
+      const response = await fetch(`/api/sandbox/logs?machineId=${machId}`);
+
+      if (!response.ok) {
+        throw new Error("Failed to start logs stream");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      logsReaderRef.current = reader;
+
+      const readLogs = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              console.log("[Studio] Logs stream ended");
+              logsReaderRef.current = null;
+              break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            let currentEvent = null;
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                currentEvent = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                if (currentEvent) {
+                  try {
+                    const data = JSON.parse(line.slice(5).trim());
+                    console.log("[Studio] Log event:", currentEvent, data);
+
+                    if (currentEvent === "log") {
+                      setLogs((prev) => [
+                        ...prev,
+                        {
+                          level: data.level || "info",
+                          message: data.message,
+                          timestamp: data.timestamp || new Date().toISOString(),
+                        },
+                      ]);
+                    }
+
+                    currentEvent = null;
+                  } catch (e) {
+                    console.error("[Studio] Failed to parse log:", e);
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error("[Studio] Logs stream error:", error);
+          logsReaderRef.current = null;
+        }
+      };
+
+      readLogs();
+    } catch (error) {
+      console.error("[Studio] Failed to start logs:", error);
+    }
+  }, []);
+
+  const stopSandboxLogs = useCallback(() => {
+    if (logsReaderRef.current) {
+      logsReaderRef.current.cancel();
+      logsReaderRef.current = null;
+    }
+  }, []);
+
+  const createAndStartSandbox = useCallback(async () => {
+    if (sandboxBusyRef.current) {
+      console.log(
+        "[Studio] Sandbox operation already in progress — skipping duplicate call"
+      );
+      return;
+    }
+    sandboxBusyRef.current = true;
+    try {
+      console.log(`[Studio] Creating sandbox for project: ${projectId}`);
+      setStage("previewing");
+      setLogs([
+        {
+          level: "info",
+          message: "Creating Fly.io sandbox...",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      // Create machine
+      const createResponse = await fetch("/api/sandbox/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+
+      if (!createResponse.ok) {
+        throw new Error("Failed to create sandbox");
+      }
+
+      const createData = await createResponse.json();
+      const machId = createData.machineId;
+      setMachineId(machId);
+
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: `Machine created: ${machId}${
+            createData.reused ? " (reused)" : ""
+          }`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      // Start machine if not already started
+      if (createData.status !== "started") {
+        setLogs((prev) => [
+          ...prev,
+          {
+            level: "info",
+            message: "Starting machine...",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+
+        const startResponse = await fetch("/api/sandbox/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ machineId: machId }),
+        });
+
+        if (!startResponse.ok) {
+          throw new Error("Failed to start sandbox");
+        }
+
+        setLogs((prev) => [
+          ...prev,
+          {
+            level: "info",
+            message: "Machine started successfully",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+
+      // Start streaming logs
+      startSandboxLogs(machId);
+
+      // Deploy code to machine
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: "Deploying code to machine...",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const deployResponse = await fetch("/api/sandbox/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machineId: machId, projectId }),
+      });
+
+      if (!deployResponse.ok) {
+        const deployError = await deployResponse.json();
+        throw new Error(deployError.message || "Failed to deploy code");
+      }
+
+      const deployData = await deployResponse.json();
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: `Deployed ${deployData.filesDeployed} files (${Math.round(
+            deployData.packageSize / 1024
+          )}KB)`,
+          timestamp: new Date().toISOString(),
+        },
+        {
+          level: "info",
+          message: "Installing dependencies...",
+          timestamp: new Date().toISOString(),
+        },
+        {
+          level: "info",
+          message: "Building application...",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      // Wait a bit for build to complete before fetching URL
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // Get preview URL
+      const urlResponse = await fetch(`/api/sandbox/url?machineId=${machId}`);
+      if (urlResponse.ok) {
+        const urlData = await urlResponse.json();
+        setPreviewUrl(urlData.previewUrl);
+        setActiveTab("preview");
+
+        setLogs((prev) => [
+          ...prev,
+          {
+            level: "info",
+            message: "Application started successfully!",
+            timestamp: new Date().toISOString(),
+          },
+          {
+            level: "info",
+            message: `Preview available at: ${urlData.previewUrl}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } catch (error) {
+      console.error("[Studio] Sandbox error:", error);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "error",
+          message: `Failed to start sandbox: ${error.message}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      setStage("idle");
+    }
+    sandboxBusyRef.current = false;
+  }, [projectId, startSandboxLogs]);
+
+  const stopSandbox = useCallback(async () => {
+    if (!machineId) return;
+
+    try {
+      console.log(`[Studio] Stopping sandbox: ${machineId}`);
+      stopSandboxLogs();
+
+      const response = await fetch("/api/sandbox/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machineId }),
+      });
+
+      if (response.ok) {
+        setLogs((prev) => [
+          ...prev,
+          {
+            level: "info",
+            message: "Sandbox stopped",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+        setPreviewUrl(null);
+      }
+    } catch (error) {
+      console.error("[Studio] Failed to stop sandbox:", error);
+    }
+  }, [machineId, stopSandboxLogs]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopSandboxLogs();
+    };
+  }, [stopSandboxLogs]);
+
   const handleSendMessage = async (message) => {
     // Add user message
     const userMessage = {
-      id: Date.now(),
+      id: generateId(),
       role: "user",
       content: message,
       timestamp: new Date().toISOString(),
@@ -200,7 +488,7 @@ export default function StudioPage() {
     setMessages((prev) => [...prev, userMessage]);
 
     // Create AI message placeholder
-    const aiMessageId = Date.now() + 1;
+    const aiMessageId = generateId();
     const aiMessage = {
       id: aiMessageId,
       role: "assistant",
@@ -462,7 +750,7 @@ export default function StudioPage() {
               activities: [
                 ...activities,
                 {
-                  id: Date.now(),
+                  id: generateId(),
                   message: data.message,
                   status: data.status || "in_progress",
                   file: data.file,
@@ -624,6 +912,12 @@ export default function StudioPage() {
           })
         );
 
+        // Start sandbox after code generation completes
+        // Give a brief delay to let UI settle
+        setTimeout(() => {
+          createAndStartSandbox();
+        }, 500);
+
         break;
 
       case "error":
@@ -676,6 +970,8 @@ export default function StudioPage() {
             previewUrl={previewUrl}
             stage={stage}
             currentFile={currentFile}
+            onPreviewRestart={createAndStartSandbox}
+            onPreviewStop={stopSandbox}
           />
         }
       />

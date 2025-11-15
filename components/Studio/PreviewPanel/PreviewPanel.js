@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { FiLoader, FiExternalLink, FiRefreshCw, FiSquare } from "react-icons/fi";
 import styles from "./PreviewPanel.module.scss";
 
-export default function PreviewPanel({ previewUrl, stage }) {
+export default function PreviewPanel({ previewUrl, stage, onRestart, onStop }) {
   const isSpinningUp = stage === "previewing" && !previewUrl;
   const isReady = previewUrl !== null;
 
@@ -15,13 +15,15 @@ export default function PreviewPanel({ previewUrl, stage }) {
   };
 
   const handleRestart = () => {
-    // Will be connected to /api/preview/start in M5
-    console.log("Restart preview");
+    if (onRestart) {
+      onRestart();
+    }
   };
 
   const handleStop = () => {
-    // Will be connected to /api/preview/stop in M5
-    console.log("Stop preview");
+    if (onStop) {
+      onStop();
+    }
   };
 
   if (isSpinningUp) {

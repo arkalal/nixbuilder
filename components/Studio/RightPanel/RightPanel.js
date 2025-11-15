@@ -23,6 +23,8 @@ export default function RightPanel({
   previewUrl,
   stage,
   currentFile, // Streaming file being generated
+  onPreviewRestart,
+  onPreviewStop,
 }) {
   const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
   
@@ -86,7 +88,12 @@ export default function RightPanel({
           </div>
         )}
         {activeTab === "preview" && (
-          <PreviewPanel previewUrl={previewUrl} stage={stage} />
+          <PreviewPanel 
+            previewUrl={previewUrl} 
+            stage={stage}
+            onRestart={onPreviewRestart}
+            onStop={onPreviewStop}
+          />
         )}
         {activeTab === "logs" && <LogsPanel logs={logs} />}
       </div>

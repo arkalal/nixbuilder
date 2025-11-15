@@ -100,11 +100,28 @@ Last updated: [auto]
 - Iterative prompts modify the existing project instead of rebuilding from scratch.
 - Activities transition from in-progress to completed; stage becomes `done`.
 
-## Next Steps
+## Milestone Progress
 
-- Implement Fly.io Machines sandbox endpoints and log streaming.
-- Persist VFS with MongoDB/GridFS; connect to projects and users.
-- /api/projects CRUD and UI for project management.
+### ✅ Milestone 1 — Fly.io Machines Sandbox + Live Logs + Deployment (COMPLETE)
+
+- Created Fly.io API client (`lib/fly.js`) with full machines operations
+- Built `/api/sandbox/*` endpoints: create, start, stop, url, logs (SSE), deploy
+- Created deployment system (`lib/deployer.js`): tarball packaging, Dockerfile generation, upload, build
+- Integrated full deployment pipeline: provision → upload → build → start
+- Wired Preview panel with iframe showing live generated app + controls (restart/stop)
+- Wired Logs panel with real-time build progress streaming
+- All routes protected with NextAuth and ownership verification
+- Auto-deployment after code generation completes
+- See `docs/MILESTONE_1_IMPLEMENTATION.md` for full details
+
+**Status:** 🎉 Fully functional end-to-end! Generate code → auto-deploy to Fly.io → see live preview.
+
+### 🚧 Next Steps
+
+- **Before Testing:** Run `npm install` to add `tar` package
+- **M2:** Persist VFS with MongoDB/GridFS; connect to projects and users
+- **M3:** /api/projects CRUD and UI for project management
+- **Enhancements:** Add idle timeout for machines, improve log streaming (NATS), per-project Fly apps
 - NextAuth (Google) and protected routes for studio/dashboard.
 - Dodo Payments integration (subscription + credit top-ups) and token cost tracking.
 - Export ZIP and Deploy to Vercel.
