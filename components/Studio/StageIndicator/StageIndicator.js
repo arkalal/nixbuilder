@@ -9,7 +9,7 @@ const stageConfig = {
   planning: { label: "Planning", color: "var(--color-accent)" },
   generating: { label: "Generating", color: "var(--color-primary-start)" },
   previewing: { label: "Previewing", color: "var(--color-primary-end)" },
-  done: { label: "Done", color: "#22c55e" },
+  done: { label: "Previewed", color: "#22c55e" },
 };
 
 export default function StageIndicator({ stage }) {

@@ -82,6 +82,7 @@ export async function POST(request) {
           temperature,
           vfs: globalVFS,
           context,
+          newProject: filePaths.length === 0,
         });
         console.log("[API] generateCode returned");
 
