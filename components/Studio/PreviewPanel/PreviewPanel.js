@@ -1,7 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { FiLoader, FiExternalLink, FiRefreshCw, FiSquare } from "react-icons/fi";
+import {
+  FiLoader,
+  FiExternalLink,
+  FiRefreshCw,
+  FiSquare,
+} from "react-icons/fi";
 import styles from "./PreviewPanel.module.scss";
 
 export default function PreviewPanel({ previewUrl, stage, onRestart, onStop }) {
@@ -61,7 +66,7 @@ export default function PreviewPanel({ previewUrl, stage, onRestart, onStop }) {
             animate={{ opacity: 1 }}
             transition={{ delay: 0.4 }}
           >
-            Building your app on Fly.io...
+            Building your app in an E2B sandbox...
           </motion.p>
         </div>
       </div>
@@ -79,6 +84,16 @@ export default function PreviewPanel({ previewUrl, stage, onRestart, onStop }) {
           <p className={styles.emptyText}>
             Your app preview will appear here once it&apos;s ready
           </p>
+          {onRestart && (
+            <motion.button
+              className={styles.startButton}
+              onClick={handleRestart}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              Start preview
+            </motion.button>
+          )}
         </div>
       </div>
     );

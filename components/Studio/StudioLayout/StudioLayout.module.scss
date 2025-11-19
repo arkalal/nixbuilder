@@ -6,6 +6,11 @@
   position: relative;
 }
 
+.studioLayout.resizing,
+.studioLayout.resizing * {
+  user-select: none;
+}
+
 .leftPanel {
   flex-shrink: 0;
   height: 100%;
@@ -24,7 +29,8 @@
   flex-shrink: 0;
   background: transparent;
   transition: background var(--transition-fast);
-  
+  user-select: none;
+
   &:hover,
   &.active {
     background: var(--color-accent);
