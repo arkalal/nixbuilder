@@ -38,6 +38,7 @@ export default function StudioLayout({ leftPanel, rightPanel }) {
       ref={containerRef}
       className={`${styles.studioLayout} ${isResizing ? styles.resizing : ""}`}
     >
+      {isResizing && <div className={styles.resizeOverlay} />}
       <div className={styles.leftPanel} style={{ width: `${leftWidth}px` }}>
         {leftPanel}
       </div>

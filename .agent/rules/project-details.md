@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 Project Name: nixbuilder.dev
 
 ⸻

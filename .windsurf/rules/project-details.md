@@ -1,7 +1,3 @@
----
-trigger: always_on
----
-
 Project Name: nixbuilder.dev
 
 ⸻
@@ -39,7 +35,7 @@ Payments
 • Usage top-ups for LLM credits
 
 Preview Sandbox
-• Fly.io Machines as the sandbox provider for live previews
+• e2b Machines as the sandbox provider for live previews
 
 Hosting
 • Main nixbuilder.dev app hosted on Vercel
@@ -123,33 +119,9 @@ Required base files AI should create:
 
 ⸻
 
-4. Sandbox / Preview (Fly.io Machines)
+4. Sandbox / Preview (e2b)
 
-We will use Fly.io as the sandbox provider for live previews.
-
-Environment variables (example):
-• SANDBOX_PROVIDER=fly
-• FLY_API_TOKEN=...
-• FLY_ORG=...
-• FLY_APP_PREFIX=nixbuilder-preview- (we can create per-project machine/app names)
-
-Backend behaviour: 1. Bundle the current VFS (all generated files) into a .tar.gz archive (in memory or temporary storage). 2. Call Fly.io API / flyctl to:
-• Create or start a small Machine (e.g. shared-cpu-1x, 256–512 MB RAM)
-• Upload/extract the project code into the Machine
-• Set environment variables:
-MONGODB_URI, NEXTAUTH_SECRET, NEXTAUTH_URL, etc.
-• Run: npm install && npm run dev -- --port 3000
-• Expose port 3000 on a public HTTPS URL 3. Stream build logs (stdout/stderr) back to the frontend while the app builds and boots. 4. Once the Machine is healthy, return a preview URL that the user can open to test the generated app end-to-end.
-
-Endpoints:
-• POST /api/preview/start
-• Creates a Fly Machine, uploads project, starts dev server, returns sandboxId, previewUrl.
-• GET /api/preview/status?sandboxId=...
-• Polls status/logs for the preview (optional SSE for real-time logs).
-• POST /api/preview/stop
-• Stops and destroys the Fly Machine to save cost.
-
-Implement sensible idle timeout (e.g. 10–15 minutes) and auto-stop behaviour.
+We will use e2b as the sandbox provider for live previews.
 
 ⸻
 
