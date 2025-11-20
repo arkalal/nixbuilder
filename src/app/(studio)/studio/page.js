@@ -117,8 +117,8 @@ export default function StudioPage() {
             createdAt: new Date().toISOString(),
             completed: true,
           });
+          completedEntries.push({ path: m.path, content: m.content });
         }
-        completedEntries.push({ path: m.path, content: m.content });
       }
       return out;
     });

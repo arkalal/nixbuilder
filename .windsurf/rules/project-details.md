@@ -4,7 +4,7 @@ Project Name: nixbuilder.dev
 
 High-level Goal
 
-Build a Lovable-style AI app builder where users describe the app they want in a chat interface, and nixbuilder.dev automatically: 1. Plans the app 2. Generates a full Next.js 16 full-stack codebase 3. Spins up a live preview sandbox using Fly.io 4. Lets users test the app end-to-end (auth, backend, MongoDB, UI) 5. Allows editing, regenerating, exporting, and deploying
+Build a Lovable-style AI app builder where users describe the app they want in a chat interface, and nixbuilder.dev automatically: 1. Plans the app 2. Generates a full Next.js 16 full-stack codebase 3. Spins up a live preview sandbox using e2b 4. Lets users test the app end-to-end (auth, backend, MongoDB, UI) 5. Allows editing, regenerating, exporting, and deploying
 
 We want to use the architecture of firecrawl/open-lovable as a reference only (workflow, concepts, env structure, sandbox idea), but implement our own codebase and architecture tailored to our tech stack and business logic.
 
@@ -35,7 +35,7 @@ Payments
 • Usage top-ups for LLM credits
 
 Preview Sandbox
-• e2b Machines as the sandbox provider for live previews
+• e2b as the sandbox provider for live previews
 
 Hosting
 • Main nixbuilder.dev app hosted on Vercel
@@ -50,7 +50,7 @@ Use this repo as reference:
 Take inspiration from:
 • The idea: prompt → plan → generate code → run in sandbox → preview link
 • The environment variable structure (SANDBOX_PROVIDER, sandbox provider keys, etc.)
-• The notion of a “sandbox provider” abstraction (we’ll implement ours around Fly.io)
+• The notion of a “sandbox provider” abstraction (we’ll implement ours around e2b)
 
 Important: Use open-lovable as conceptual and architectural reference (pipeline, env patterns, organization). We implement our own code.
 
@@ -199,7 +199,7 @@ Backend Endpoints to Implement (Next.js App Router)
 • Basic CRUD for virtual filesystem entries
 • Works with an in-memory map + MongoDB/GridFS persistence
 • /api/preview/start, /api/preview/status, /api/preview/stop
-• Integrate with Fly.io Machines API (not E2B, not Vercel Sandbox) for sandbox lifecycle
+• Integrate with e2b API for sandbox lifecycle
 • /api/export
 • Streams a ZIP archive of the current VFS
 • /api/files/[...path]
@@ -219,5 +219,5 @@ Key Constraints & Style
 • Use JS/JSX + SCSS, no TypeScript, no Tailwind
 • Use npm in all scripts, docs, and generated projects
 • Use OpenRouter via Vercel AI SDK for all LLM calls
-• Use Fly.io as the sandbox provider (SANDBOX_PROVIDER=fly)
+• Use e2b as the sandbox provider (SANDBOX_PROVIDER=e2b)
 • Treat firecrawl/open-lovable only as conceptual reference for architecture & env, not as a direct codebase copy
