@@ -2,25 +2,27 @@
 
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
-import { 
-  FiChevronRight, 
-  FiChevronDown, 
-  FiFolder, 
-  FiFile
+import {
+  FiChevronRight,
+  FiChevronDown,
+  FiFolder,
+  FiFile,
 } from "react-icons/fi";
 import styles from "./FileExplorer.module.scss";
 
 export default function FileExplorer({ files, selectedFile, onFileSelect }) {
-  const [expandedFolders, setExpandedFolders] = useState(new Set(['root', 'app', 'components']));
+  const [expandedFolders, setExpandedFolders] = useState(
+    new Set(["root", "app", "components"])
+  );
 
   // Build file tree structure
   const fileTree = useMemo(() => {
     const tree = {};
-    
-    files.forEach(file => {
-      const parts = file.path.split('/');
+
+    files.forEach((file) => {
+      const parts = file.path.split("/");
       let current = tree;
-      
+
       parts.forEach((part, index) => {
         if (index === parts.length - 1) {
           // This is a file
@@ -33,12 +35,12 @@ export default function FileExplorer({ files, selectedFile, onFileSelect }) {
         }
       });
     });
-    
+
     return tree;
   }, [files]);
 
   const toggleFolder = (folderPath) => {
-    setExpandedFolders(prev => {
+    setExpandedFolders((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(folderPath)) {
         newSet.delete(folderPath);
@@ -50,21 +52,25 @@ export default function FileExplorer({ files, selectedFile, onFileSelect }) {
   };
 
   const getFileIcon = (filename) => {
-    const ext = filename.split('.').pop();
-    return <FiFile className={styles[`icon${ext}`] || styles.iconFile} />;
+    const ext = filename.split(".").pop().toLowerCase();
+    // Map extensions to style classes
+    const iconClass = styles[`icon${ext}`] || styles.iconFile;
+    return <FiFile className={iconClass} />;
   };
 
-  const renderTree = (node, path = '', level = 0) => {
-    const folders = Object.keys(node).filter(k => k !== '_files' && typeof node[k] === 'object');
+  const renderTree = (node, path = "", level = 0) => {
+    const folders = Object.keys(node).filter(
+      (k) => k !== "_files" && typeof node[k] === "object"
+    );
     const nodeFiles = node._files || [];
 
     return (
       <>
         {/* Render folders */}
-        {folders.map(folder => {
+        {folders.map((folder) => {
           const folderPath = path ? `${path}/${folder}` : folder;
           const isExpanded = expandedFolders.has(folderPath);
-          
+
           return (
             <div key={folderPath}>
               <div
@@ -80,22 +86,26 @@ export default function FileExplorer({ files, selectedFile, onFileSelect }) {
                 <FiFolder className={styles.folderIcon} />
                 <span className={styles.folderName}>{folder}</span>
               </div>
-              
+
               {isExpanded && renderTree(node[folder], folderPath, level + 1)}
             </div>
           );
         })}
 
         {/* Render files */}
-        {nodeFiles.map(file => (
+        {nodeFiles.map((file) => (
           <div
             key={file.path}
-            className={`${styles.fileRow} ${selectedFile === file.path ? styles.selected : ''}`}
+            className={`${styles.fileRow} ${
+              selectedFile === file.path ? styles.selected : ""
+            }`}
             style={{ paddingLeft: `${level * 16 + 32}px` }}
             onClick={() => onFileSelect(file.path)}
           >
             {getFileIcon(file.path)}
-            <span className={styles.fileName}>{file.path.split('/').pop()}</span>
+            <span className={styles.fileName}>
+              {file.path.split("/").pop()}
+            </span>
           </div>
         ))}
       </>
@@ -117,9 +127,7 @@ export default function FileExplorer({ files, selectedFile, onFileSelect }) {
         <FiFolder />
         <span>Explorer</span>
       </div>
-      <div className={styles.tree}>
-        {renderTree(fileTree)}
-      </div>
+      <div className={styles.tree}>{renderTree(fileTree)}</div>
     </div>
   );
 }

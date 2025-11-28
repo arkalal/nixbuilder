@@ -2,9 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { FiFile, FiFolder } from "react-icons/fi";
+import { FiFile, FiFolder, FiX, FiXCircle } from "react-icons/fi";
 import styles from "./CodeViewer.module.scss";
 
 export default function CodeViewer({
@@ -13,21 +11,26 @@ export default function CodeViewer({
   selectedFile: externalSelectedFile,
   onFileSelect,
   currentFile,
+  onFileUpdate,
+  openTabs = [],
+  onTabClose,
+  onCloseAllTabs,
 }) {
   const [internalSelectedFile, setInternalSelectedFile] = useState(null);
+  // Track edits per file: { [path]: { content: string, dirty: boolean } }
+  const [editState, setEditState] = useState({});
   const tabsContainerRef = useRef(null);
   const tabRefsRef = useRef({});
+  const textareaRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  // Use external selectedFile if provided, otherwise use internal state
   const selectedFilePath = externalSelectedFile || internalSelectedFile;
 
-  // Merge currentFile (streaming) into files array for display
+  // Merge currentFile (streaming) into files array
   const allFiles = React.useMemo(() => {
     if (!currentFile) return files;
-
     const index = files.findIndex((f) => f.path === currentFile.path);
     if (index >= 0) {
-      // Show streaming state and partial content on the existing tab
       const augmented = files.slice();
       augmented[index] = {
         ...augmented[index],
@@ -36,8 +39,6 @@ export default function CodeViewer({
       };
       return augmented;
     }
-
-    // File is new and streaming - add to display with streaming content
     return [
       ...files,
       {
@@ -49,63 +50,108 @@ export default function CodeViewer({
     ];
   }, [files, currentFile]);
 
-  const scrollRef = useRef(null);
+  // Filter to show only open tabs
+  // If onTabClose is provided, respect openTabs (even if empty means no tabs)
+  // If no tab management, show all files
+  const displayedTabs = onTabClose
+    ? allFiles.filter((f) => openTabs.includes(f.path))
+    : allFiles;
+
   const displayFile =
     allFiles.find((f) => f.path === selectedFilePath) ||
-    allFiles[allFiles.length - 1];
+    (displayedTabs.length > 0 ? displayedTabs[displayedTabs.length - 1] : null);
+
   const depPath = displayFile?.path;
-  const depContent = displayFile?.content;
+  const depContent = displayFile?.content || "";
   const depStreaming = !!displayFile?.streaming;
+
+  // Get current edit state for displayed file
+  const currentEdit = depPath ? editState[depPath] : null;
+  const displayContent = currentEdit?.content ?? depContent;
+  const isDirty = currentEdit?.dirty ?? false;
+
+  // Auto-scroll during streaming
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    if (depStreaming) {
+    if (el && depStreaming) {
       el.scrollTop = el.scrollHeight;
     }
   }, [depPath, depContent, depStreaming]);
 
-  // Add filename extraction to each file
-  const filesWithNames = allFiles.map((file) => ({
+  // Auto-scroll tabs to active
+  useEffect(() => {
+    if (!depPath) return;
+    const el = tabRefsRef.current[depPath];
+    const container = tabsContainerRef.current;
+    if (el && container) {
+      el.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+    }
+  }, [depPath]);
+
+  const filesWithNames = displayedTabs.map((file) => ({
     ...file,
     name: file.path.split("/").pop(),
   }));
-
-  // Smoothly auto-scroll to the active tab when selection/streaming changes
-  const activePath = displayFile?.path;
-  useEffect(() => {
-    if (!activePath) return;
-    const el = tabRefsRef.current[activePath];
-    const container = tabsContainerRef.current;
-    if (el && container) {
-      try {
-        el.scrollIntoView({
-          behavior: "smooth",
-          block: "nearest",
-          inline: "center",
-        });
-      } catch {
-        // Fallback manual scroll calculation
-        const elLeft = el.offsetLeft;
-        const elRight = elLeft + el.offsetWidth;
-        const viewLeft = container.scrollLeft;
-        const viewRight = viewLeft + container.clientWidth;
-        if (elLeft < viewLeft) {
-          container.scrollTo({ left: elLeft - 16, behavior: "smooth" });
-        } else if (elRight > viewRight) {
-          container.scrollTo({
-            left: elRight - container.clientWidth + 16,
-            behavior: "smooth",
-          });
-        }
-      }
-    }
-  }, [activePath]);
 
   const handleTabClick = (file) => {
     if (onFileSelect) {
       onFileSelect(file.path);
     } else {
       setInternalSelectedFile(file.path);
+    }
+  };
+
+  const handleTabCloseClick = (e, filePath) => {
+    e.stopPropagation();
+    if (onTabClose) onTabClose(filePath);
+  };
+
+  const handleCloseAllClick = () => {
+    if (onCloseAllTabs) onCloseAllTabs();
+  };
+
+  const handleContentChange = (e) => {
+    if (!depPath) return;
+    setEditState((prev) => ({
+      ...prev,
+      [depPath]: { content: e.target.value, dirty: true },
+    }));
+  };
+
+  const handleSave = () => {
+    if (isDirty && depPath && onFileUpdate) {
+      onFileUpdate(depPath, displayContent);
+      setEditState((prev) => ({
+        ...prev,
+        [depPath]: { content: displayContent, dirty: false },
+      }));
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      handleSave();
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const start = e.target.selectionStart;
+      const end = e.target.selectionEnd;
+      const newVal =
+        displayContent.substring(0, start) +
+        "  " +
+        displayContent.substring(end);
+      setEditState((prev) => ({
+        ...prev,
+        [depPath]: { content: newVal, dirty: true },
+      }));
+      setTimeout(() => {
+        e.target.selectionStart = e.target.selectionEnd = start + 2;
+      }, 0);
     }
   };
 
@@ -125,76 +171,103 @@ export default function CodeViewer({
         </div>
       ) : (
         <>
-          <div className={styles.fileTabs} ref={tabsContainerRef}>
-            {filesWithNames.map((file) => (
+          <div className={styles.tabsHeader}>
+            <div className={styles.fileTabs} ref={tabsContainerRef}>
+              {filesWithNames.map((file) => (
+                <div
+                  key={file.path}
+                  className={`${styles.fileTab} ${
+                    displayFile?.path === file.path ? styles.active : ""
+                  } ${file.streaming ? styles.streaming : ""}`}
+                  onClick={() => handleTabClick(file)}
+                  ref={(el) => {
+                    if (el) tabRefsRef.current[file.path] = el;
+                  }}
+                >
+                  {file.streaming && <div className={styles.spinner} />}
+                  <FiFile className={styles.fileIcon} />
+                  <span className={styles.fileName}>{file.name}</span>
+                  {!file.streaming && onTabClose && (
+                    <button
+                      className={styles.tabCloseBtn}
+                      onClick={(e) => handleTabCloseClick(e, file.path)}
+                      title="Close tab"
+                    >
+                      <FiX />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {displayedTabs.length > 0 && onCloseAllTabs && (
               <button
-                key={file.path}
-                className={`${styles.fileTab} ${
-                  displayFile?.path === file.path ? styles.active : ""
-                } ${file.streaming ? styles.streaming : ""}`}
-                onClick={() => handleTabClick(file)}
-                ref={(el) => {
-                  if (el) tabRefsRef.current[file.path] = el;
-                }}
+                className={styles.closeAllBtn}
+                onClick={handleCloseAllClick}
+                title="Close all tabs"
               >
-                {file.streaming && <div className={styles.spinner} />}
-                <FiFile className={styles.fileIcon} />
-                <span className={styles.fileName}>{file.name}</span>
+                <FiXCircle />
+                <span>Close All</span>
               </button>
-            ))}
+            )}
           </div>
 
           <div className={styles.codeContent} ref={scrollRef}>
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={displayFile?.path}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className={styles.codeWrapper}
-              >
-                <SyntaxHighlighter
-                  language={getLanguage(displayFile?.name)}
-                  style={vscDarkPlus}
-                  showLineNumbers
-                  customStyle={{
-                    margin: 0,
-                    padding: "1rem",
-                    background: "var(--color-bg)",
-                    fontSize: "0.875rem",
-                    fontFamily: "var(--font-mono)",
-                  }}
+            {displayFile ? (
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={displayFile.path}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className={styles.codeWrapper}
                 >
-                  {displayFile?.content || ""}
-                </SyntaxHighlighter>
-                {displayFile?.streaming && (
-                  <span className={styles.cursor}>▊</span>
-                )}
-              </motion.div>
-            </AnimatePresence>
+                  {displayFile.streaming ? (
+                    <div className={styles.streamingContent}>
+                      <pre className={styles.codePreview}>
+                        <code>{displayFile.content || ""}</code>
+                      </pre>
+                      <span className={styles.cursor}>▊</span>
+                    </div>
+                  ) : (
+                    <div className={styles.editorContainer}>
+                      <div className={styles.lineNumbers}>
+                        {displayContent.split("\n").map((_, i) => (
+                          <span key={i} className={styles.lineNumber}>
+                            {i + 1}
+                          </span>
+                        ))}
+                      </div>
+                      <textarea
+                        ref={textareaRef}
+                        className={styles.codeEditor}
+                        value={displayContent}
+                        onChange={handleContentChange}
+                        onBlur={handleSave}
+                        onKeyDown={handleKeyDown}
+                        spellCheck={false}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                      />
+                      {isDirty && (
+                        <div className={styles.editingIndicator}>
+                          <span>Editing • Ctrl+S to save</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            ) : (
+              <div className={styles.noFileSelected}>
+                <FiFile className={styles.noFileIcon} />
+                <p>Select a file from the explorer to view</p>
+              </div>
+            )}
           </div>
         </>
       )}
     </div>
   );
-}
-
-function getLanguage(filename) {
-  if (!filename) return "javascript";
-
-  const ext = filename.split(".").pop();
-  const langMap = {
-    js: "javascript",
-    jsx: "jsx",
-    ts: "typescript",
-    tsx: "tsx",
-    json: "json",
-    css: "css",
-    scss: "scss",
-    html: "html",
-    md: "markdown",
-  };
-
-  return langMap[ext] || "javascript";
 }

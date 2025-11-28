@@ -1,116 +1,187 @@
+// VS Code-like File Explorer Theme
 .fileExplorer {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
+  background: #252526;
+  border-right: 1px solid #1e1e1e;
 }
 
 .header {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-border);
-  font-size: 0.8125rem;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #252526;
+  border-bottom: 1px solid #1e1e1e;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--color-text);
+  color: #bbbbbb;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 
   svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
+    color: #c5c5c5;
   }
 }
 
 .tree {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-xs) 0;
+  padding: 4px 0;
+
+  &::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #252526;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #424242;
+    border: 2px solid #252526;
+    border-radius: 5px;
+
+    &:hover {
+      background: #4f4f4f;
+    }
+  }
 }
 
 .folderRow {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: 4px 8px;
+  gap: 4px;
+  padding: 3px 8px;
   cursor: pointer;
   user-select: none;
-  transition: background var(--transition-base);
-  font-size: 0.8125rem;
+  transition: background 0.1s ease;
+  font-size: 13px;
+  height: 22px;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: #2a2d2e;
+  }
+
+  &:focus {
+    outline: none;
+    background: #094771;
   }
 }
 
 .chevron {
-  width: 14px;
-  height: 14px;
-  color: var(--color-text-secondary);
+  width: 16px;
+  height: 16px;
+  color: #c5c5c5;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  svg {
+    width: 12px;
+    height: 12px;
+  }
 }
 
 .folderIcon {
   width: 16px;
   height: 16px;
-  color: #60a5fa;
+  color: #dcb67a; // VS Code folder color (yellow/gold)
   flex-shrink: 0;
 }
 
 .folderName {
-  color: var(--color-text);
-  font-weight: 500;
+  color: #cccccc;
+  font-weight: 400;
+  font-size: 13px;
 }
 
 .fileRow {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: 4px 8px;
+  gap: 4px;
+  padding: 3px 8px;
   cursor: pointer;
   user-select: none;
-  transition: all var(--transition-base);
-  font-size: 0.8125rem;
+  transition: background 0.1s ease;
+  font-size: 13px;
+  height: 22px;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: #2a2d2e;
   }
 
   &.selected {
-    background: rgba(var(--color-accent-rgb), 0.1);
-    border-left: 2px solid var(--color-accent);
+    background: #094771;
+
+    .fileName {
+      color: #ffffff;
+    }
+  }
+
+  &:focus {
+    outline: none;
+    background: #094771;
   }
 
   svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
   }
 }
 
 .fileName {
-  color: var(--color-text);
+  color: #cccccc;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 13px;
 }
 
-// File type icons
-.iconjs, .iconjsx {
-  color: #f7df1e;
+// VS Code File Type Icons - realistic colors
+.iconjs {
+  color: #f1dd3f; // JavaScript yellow
 }
 
-.iconscss, .iconcss {
-  color: #2563eb;
+.iconjsx {
+  color: #61dafb; // React cyan/blue
+}
+
+.iconscss {
+  color: #ce679a; // SCSS pink
+}
+
+.iconcss {
+  color: #42a5f5; // CSS blue
 }
 
 .iconjson {
-  color: #16a34a;
+  color: #fbc02d; // JSON yellow
+}
+
+.iconmd {
+  color: #42a5f5; // Markdown blue
+}
+
+.iconenv {
+  color: #fdd835; // Env yellow
+}
+
+.iconmjs {
+  color: #f1dd3f; // MJS yellow (same as JS)
 }
 
 .iconFile {
-  color: var(--color-text-secondary);
+  color: #c5c5c5; // Default gray
+}
+
+.iconhtml {
+  color: #e44d26; // HTML orange
 }
 
 .empty {
@@ -119,19 +190,20 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: var(--spacing-xl);
+  padding: 20px;
   text-align: center;
+  background: #252526;
 }
 
 .emptyIcon {
   width: 48px;
   height: 48px;
-  color: var(--color-text-secondary);
-  opacity: 0.5;
-  margin-bottom: var(--spacing-md);
+  color: #5a5a5a;
+  opacity: 0.6;
+  margin-bottom: 12px;
 }
 
 .emptyText {
-  font-size: 0.875rem;
-  color: var(--color-text-secondary);
+  font-size: 13px;
+  color: #858585;
 }

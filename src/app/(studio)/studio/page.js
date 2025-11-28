@@ -40,6 +40,9 @@ export default function StudioPage() {
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  // Track user-edited files to protect them from AI overwrites
+  const userEditedFilesRef = useRef(new Set());
   // Deduplicate last queued completed file for brief display
   const lastQueuedPathRef = useRef(null);
   // Monotonic ID generator to avoid duplicate React keys when events happen within the same millisecond
@@ -83,12 +86,23 @@ export default function StudioPage() {
     }
 
     // Apply updates/additions using functional update to avoid dependency loops
+    // IMPORTANT: Protect user-edited files from AI overwrites
     let completedEntries = [];
     setFiles((prev) => {
       if (matches.length === 0) return prev;
       const out = prev.slice();
       const indexByPath = new Map(out.map((f, i) => [f.path, i]));
       for (const m of matches) {
+        // PROTECTION: Skip if this file was edited by user OR is .env file that already exists
+        const isUserEdited = userEditedFilesRef.current.has(m.path);
+        const isExistingEnv = m.path === ".env" && indexByPath.has(m.path);
+        if (isUserEdited || isExistingEnv) {
+          console.log(
+            `[Studio] 🛡️ PROTECTED: Skipping overwrite of ${m.path} (user-edited or .env)`
+          );
+          continue;
+        }
+
         const fileExt = m.path.split(".").pop();
         const fileType =
           fileExt === "jsx" || fileExt === "js"
@@ -100,7 +114,7 @@ export default function StudioPage() {
             : "text";
         const idx = indexByPath.get(m.path);
         if (typeof idx === "number") {
-          // Update
+          // Update existing file (not user-edited)
           out[idx] = {
             ...out[idx],
             content: m.content,
@@ -109,7 +123,7 @@ export default function StudioPage() {
             edited: true,
           };
         } else {
-          // Add
+          // Add new file
           out.push({
             path: m.path,
             content: m.content,
@@ -239,6 +253,36 @@ export default function StudioPage() {
       (filesRef.current || []).forEach((f) => {
         if (f && f.path) filesMap[f.path] = f.content || "";
       });
+
+      // Log .env content being sent to sandbox for debugging
+      if (filesMap[".env"]) {
+        console.log(
+          `[Studio] 📋 .env being sent to sandbox (${filesMap[".env"].length} chars)`
+        );
+      }
+
+      // Sync all user-edited files to VFS before starting preview (safety net)
+      const userEditedPaths = Array.from(userEditedFilesRef.current);
+      if (userEditedPaths.length > 0) {
+        console.log(
+          `[Studio] 🔄 Syncing ${userEditedPaths.length} user-edited files to VFS before preview`
+        );
+        await Promise.all(
+          userEditedPaths.map((filePath) => {
+            const content = filesMap[filePath];
+            if (content !== undefined) {
+              return fetch("/api/studio/sync-file", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filePath, content }),
+              }).catch((err) =>
+                console.error(`[Studio] Failed to sync ${filePath}:`, err)
+              );
+            }
+            return Promise.resolve();
+          })
+        );
+      }
 
       // Start E2B preview (creates sandbox, writes files, installs, starts dev)
       const startResponse = await fetch("/api/preview/start", {
@@ -707,14 +751,28 @@ export default function StudioPage() {
 
         // Always MERGE backend files into client-parsed files to ensure completeness
         // This prevents cases where a few files were parsed client-side, but others were missed.
+        // IMPORTANT: Protect user-edited files from being overwritten by VFS content
         setFiles((prev) => {
           const existingByPath = new Map(prev.map((f) => [f.path, f]));
           const merged = prev.slice();
           const backendEntries = data.files ? Object.entries(data.files) : [];
           let added = 0;
           let updated = 0;
+          let protected_ = 0;
           for (const [path, content] of backendEntries) {
             const existing = existingByPath.get(path);
+
+            // PROTECTION: Never overwrite user-edited files or .env files
+            const isUserEdited = userEditedFilesRef.current.has(path);
+            const isEnvFile = path === ".env" || path.endsWith("/.env");
+            if (existing && (isUserEdited || isEnvFile)) {
+              console.log(
+                `[Frontend] 🛡️ PROTECTED in complete: Keeping user's ${path}`
+              );
+              protected_++;
+              continue;
+            }
+
             if (!existing) {
               const fileExt = path.split(".").pop();
               const fileType =
@@ -735,14 +793,21 @@ export default function StudioPage() {
               added++;
             } else if (existing.content !== content) {
               // Update stale content if backend has the authoritative final version
-              existing.content = content;
-              existing.updatedAt = new Date().toISOString();
+              // Create new object to avoid mutation issues
+              const idx = merged.findIndex((f) => f.path === path);
+              if (idx !== -1) {
+                merged[idx] = {
+                  ...merged[idx],
+                  content,
+                  updatedAt: new Date().toISOString(),
+                };
+              }
               updated++;
             }
           }
           if (backendEntries.length > 0) {
             console.log(
-              `[Frontend] ✅ Finalized files: kept ${prev.length}, added ${added}, updated ${updated}`
+              `[Frontend] ✅ Finalized files: kept ${prev.length}, added ${added}, updated ${updated}, protected ${protected_}`
             );
           }
           return merged;
@@ -767,11 +832,9 @@ export default function StudioPage() {
           })
         );
 
-        // Start sandbox after code generation completes
-        // Give a brief delay to let UI settle
-        setTimeout(() => {
-          createAndStartSandbox();
-        }, 500);
+        // Preview is now manual - user clicks "Start Preview" button
+        // Stage set to 'done' so user can manually start preview when ready
+        setStage("done");
 
         break;
 
@@ -801,6 +864,49 @@ export default function StudioPage() {
     }
   };
 
+  // Handle file content updates from the editor
+  const handleFileUpdate = useCallback((filePath, newContent) => {
+    console.log(`[Studio] File updated by user: ${filePath}`);
+
+    // Mark this file as user-edited to protect from AI overwrites
+    userEditedFilesRef.current.add(filePath);
+    console.log(`[Studio] 🛡️ File marked as protected: ${filePath}`);
+
+    // Update client-side state
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.path === filePath
+          ? {
+              ...f,
+              content: newContent,
+              updatedAt: new Date().toISOString(),
+              userEdited: true,
+            }
+          : f
+      )
+    );
+    // Update filesRef for sandbox sync
+    filesRef.current = filesRef.current.map((f) =>
+      f.path === filePath
+        ? {
+            ...f,
+            content: newContent,
+            updatedAt: new Date().toISOString(),
+            userEdited: true,
+          }
+        : f
+    );
+
+    // Sync to server VFS so AI has correct context on next iteration
+    fetch("/api/studio/sync-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath, content: newContent }),
+    }).catch((err) => {
+      console.error("[Studio] Failed to sync file to VFS:", err);
+    });
+  }, []);
+
   return (
     <div className={styles.studioPage}>
       <StudioLayout
@@ -827,6 +933,7 @@ export default function StudioPage() {
             currentFile={currentFile}
             onPreviewRestart={createAndStartSandbox}
             onPreviewStop={stopSandbox}
+            onFileUpdate={handleFileUpdate}
           />
         }
       />

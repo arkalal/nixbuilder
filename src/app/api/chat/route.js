@@ -94,9 +94,17 @@ export async function POST(request) {
             console.log("[API] Calling generateCode...");
             const isNewProject = filePaths.length === 0;
             // Force stricter focus for iterative edits to avoid redoing previous features
+            // Also explicitly protect .env and other config files
+            const hasEnvFile = filePaths.includes(".env");
             const latestTaskPreface = isNewProject
               ? message
               : `ONLY perform the following latest task. Do NOT re-implement previous features.
+${
+  hasEnvFile
+    ? "⚠️ CRITICAL: .env file exists - DO NOT output or regenerate it. User has their credentials there."
+    : ""
+}
+Output ONLY the files that need to be changed for this request.
 Instruction: ${message}`;
 
             const effectiveTemp = isNewProject

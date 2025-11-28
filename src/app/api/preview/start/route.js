@@ -14,6 +14,19 @@ function computeCSP() {
   return `frame-ancestors 'self' ${allowOrigins}`;
 }
 
+// Detect if NextAuth is configured in the project
+function hasNextAuthConfigured(files) {
+  const filePaths = Object.keys(files);
+  return filePaths.some(
+    (path) =>
+      path.includes("[...nextauth]") ||
+      path === "auth.js" ||
+      path === "auth.ts" ||
+      path.endsWith("/auth.js") ||
+      path.endsWith("/auth.ts")
+  );
+}
+
 // Remove invalid deps accidentally inferred from local aliases or bad names
 function sanitizeInvalidDeps(files) {
   const out = { ...files };
@@ -210,6 +223,9 @@ function ensureClientComponentsForImports(files) {
 function injectPreviewHeaders(files) {
   const out = { ...files };
   const cspValue = computeCSP();
+  const isNextAuthApp = hasNextAuthConfigured(files);
+
+  console.log(`[Preview] NextAuth detected: ${isNextAuthApp}`);
 
   // Inject headers() into next.config.mjs if missing
   if (out["next.config.mjs"]) {
@@ -230,8 +246,40 @@ function injectPreviewHeaders(files) {
     }
   }
 
-  // Always inject a preview-safe middleware that sets CSP/iframe headers and bypasses any auth redirects
-  out["middleware.js"] = `import { NextResponse } from 'next/server';
+  // Check if user's app has existing middleware
+  const hasExistingMiddleware =
+    files["middleware.js"] ||
+    files["middleware.ts"] ||
+    files["src/middleware.js"] ||
+    files["src/middleware.ts"];
+
+  if (isNextAuthApp && hasExistingMiddleware) {
+    // For NextAuth apps with existing middleware, DON'T overwrite
+    // The headers are already set via next.config.mjs headers()
+    console.log(`[Preview] Preserving existing middleware for NextAuth app`);
+  } else if (isNextAuthApp) {
+    // NextAuth app but no middleware - inject a NextAuth-compatible preview middleware
+    console.log(`[Preview] Injecting NextAuth-compatible preview middleware`);
+    out["middleware.js"] = `import { NextResponse } from 'next/server';
+
+export function middleware(req) {
+  // Preview middleware - sets headers but allows all auth routes to work
+  const res = NextResponse.next();
+  res.headers.set('X-Frame-Options', 'ALLOWALL');
+  res.headers.set("Content-Security-Policy", "${cspValue}");
+  return res;
+}
+
+// Only match non-auth routes for header injection
+// Let NextAuth handle /api/auth/* routes without interference
+export const config = { 
+  matcher: [
+    '/((?!api/auth|_next/static|_next/image|favicon.ico).*)',
+  ]
+};`;
+  } else {
+    // Non-NextAuth app - use simple preview middleware
+    out["middleware.js"] = `import { NextResponse } from 'next/server';
 
 export function middleware(req) {
   // In preview, do not block or redirect any routes; just set headers
@@ -242,6 +290,7 @@ export function middleware(req) {
 }
 
 export const config = { matcher: ['/:path*'] };`;
+  }
 
   return out;
 }
@@ -366,10 +415,22 @@ function ensurePreviewFrameworkVersions(files) {
 
 function ensurePreviewBypass(files) {
   const out = { ...files };
-  // Stub /api/auth/session to avoid next-auth client JSON parse errors when next-auth isn't configured
+  const isNextAuthApp = hasNextAuthConfigured(files);
+
+  // Stub /api/auth/session ONLY if NextAuth is NOT configured
+  // This prevents the stub from overriding NextAuth's session handler
   const sessionRouteSrc = "src/app/api/auth/session/route.js";
   const sessionRouteRoot = "app/api/auth/session/route.js";
-  if (!out[sessionRouteSrc] && !out[sessionRouteRoot]) {
+
+  if (isNextAuthApp) {
+    // NextAuth IS configured - DO NOT add session stub
+    // NextAuth's [...nextauth] catch-all handles /api/auth/session
+    console.log(
+      `[Preview] Skipping session stub - NextAuth handles /api/auth/session`
+    );
+  } else if (!out[sessionRouteSrc] && !out[sessionRouteRoot]) {
+    // NextAuth NOT configured - add stub to prevent client JSON parse errors
+    console.log(`[Preview] Adding session stub for non-NextAuth app`);
     out[
       sessionRouteSrc
     ] = `export async function GET() {\n  return Response.json(null);\n}\n`;
@@ -388,6 +449,94 @@ function ensurePreviewBypass(files) {
       "src/app/layout.jsx"
     ] = `export const metadata = { title: 'Preview' };\nexport default function RootLayout({ children }) {\n  return (\n    <html><body>{children}</body></html>\n  );\n}\n`;
   }
+  return out;
+}
+
+// Ensure NextAuth config has preview-compatible settings
+// CRITICAL: NextAuth cookies don't work in iframes due to SameSite policy
+// Must use sameSite: 'none' + secure: true for iframe auth to work
+function ensureNextAuthPreviewConfig(files) {
+  const out = { ...files };
+
+  // Find auth.js file
+  const authFilePaths = [
+    "auth.js",
+    "auth.ts",
+    "lib/auth.js",
+    "lib/auth.ts",
+    "src/auth.js",
+    "src/auth.ts",
+  ];
+  let authFilePath = null;
+  for (const path of authFilePaths) {
+    if (out[path]) {
+      authFilePath = path;
+      break;
+    }
+  }
+
+  if (authFilePath) {
+    let authContent = out[authFilePath];
+    console.log(`[Preview] Found NextAuth config at ${authFilePath}`);
+
+    // Check if cookies config already exists
+    const hasCookiesConfig = authContent.includes("cookies:");
+
+    if (!hasCookiesConfig) {
+      // CRITICAL FIX: Add iframe-compatible cookie configuration
+      // Without sameSite: 'none', cookies won't be sent in iframe context
+      const cookiesConfig = `
+  // PREVIEW: Cookie config for iframe compatibility (sameSite: none required)
+  cookies: {
+    sessionToken: {
+      name: 'next-auth.session-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'none',
+        path: '/',
+        secure: true,
+      },
+    },
+    callbackUrl: {
+      name: 'next-auth.callback-url',
+      options: {
+        sameSite: 'none',
+        path: '/',
+        secure: true,
+      },
+    },
+    csrfToken: {
+      name: 'next-auth.csrf-token',
+      options: {
+        httpOnly: true,
+        sameSite: 'none',
+        path: '/',
+        secure: true,
+      },
+    },
+  },`;
+
+      // Insert cookies config after authOptions opening brace
+      authContent = authContent.replace(
+        /export\s+(const|let|var)\s+authOptions\s*=\s*\{/,
+        (match) => `${match}${cookiesConfig}`
+      );
+      console.log(`[Preview] Injected iframe-compatible cookies config`);
+    }
+
+    // Ensure trustHost: true is present
+    if (!authContent.includes("trustHost")) {
+      authContent = authContent.replace(
+        /export\s+(const|let|var)\s+authOptions\s*=\s*\{/,
+        (match) => `${match}\n  trustHost: true,`
+      );
+      console.log(`[Preview] Added trustHost: true`);
+    }
+
+    out[authFilePath] = authContent;
+    console.log(`[Preview] ✅ NextAuth config updated for iframe preview`);
+  }
+
   return out;
 }
 
@@ -429,6 +578,8 @@ export async function POST(request) {
     filesWithHeaders = ensureClientComponentsForImports(filesWithHeaders);
     // Add jsconfig path aliases if needed so local aliases resolve during preview
     filesWithHeaders = ensureJSConfigPaths(filesWithHeaders);
+    // Ensure NextAuth config has preview-compatible settings (trustHost, useSecureCookies)
+    filesWithHeaders = ensureNextAuthPreviewConfig(filesWithHeaders);
     await provider.writeFiles(filesWithHeaders);
 
     // Install dependencies, start dev server

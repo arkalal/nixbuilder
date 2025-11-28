@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { FiCode, FiEye, FiTerminal } from "react-icons/fi";
 import FileExplorer from "../FileExplorer/FileExplorer";
@@ -25,9 +25,18 @@ export default function RightPanel({
   currentFile, // Streaming file being generated
   onPreviewRestart,
   onPreviewStop,
+  onFileUpdate, // Callback when file content is edited
 }) {
   const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
-  
+  const [closedTabs, setClosedTabs] = useState(new Set()); // Track explicitly closed tabs
+
+  // Compute open tabs: all file paths minus explicitly closed ones
+  const openTabs = React.useMemo(() => {
+    const allPaths = files.map((f) => f.path);
+    // Filter out explicitly closed tabs
+    return allPaths.filter((path) => !closedTabs.has(path));
+  }, [files, closedTabs]);
+
   // Auto-select current streaming file, or latest completed file, or manual selection
   const selectedFile = React.useMemo(() => {
     if (stage === "generating") {
@@ -38,6 +47,49 @@ export default function RightPanel({
     }
     return manuallySelectedFile;
   }, [stage, currentFile, files, manuallySelectedFile]);
+
+  // Handle file selection from explorer (opens tab and selects)
+  const handleFileSelect = useCallback((filePath) => {
+    setManuallySelectedFile(filePath);
+    // Remove from closed tabs to ensure it's open
+    setClosedTabs((prev) => {
+      if (prev.has(filePath)) {
+        const next = new Set(prev);
+        next.delete(filePath);
+        return next;
+      }
+      return prev;
+    });
+  }, []);
+
+  // Handle tab close
+  const handleTabClose = useCallback(
+    (filePath) => {
+      // Add to closed tabs
+      setClosedTabs((prev) => {
+        const next = new Set(prev);
+        next.add(filePath);
+        return next;
+      });
+      // If closing the selected file, select another open tab
+      if (manuallySelectedFile === filePath) {
+        const remainingOpen = openTabs.filter((p) => p !== filePath);
+        if (remainingOpen.length > 0) {
+          setManuallySelectedFile(remainingOpen[remainingOpen.length - 1]);
+        } else {
+          setManuallySelectedFile(null);
+        }
+      }
+    },
+    [manuallySelectedFile, openTabs]
+  );
+
+  // Handle close all tabs
+  const handleCloseAllTabs = useCallback(() => {
+    // Add all current file paths to closed tabs
+    setClosedTabs(new Set(files.map((f) => f.path)));
+    setManuallySelectedFile(null);
+  }, [files]);
 
   return (
     <div className={styles.rightPanel}>
@@ -70,26 +122,30 @@ export default function RightPanel({
         {activeTab === "code" && (
           <div className={styles.codeTabLayout}>
             <div className={styles.fileExplorerPanel}>
-              <FileExplorer 
+              <FileExplorer
                 files={files}
                 selectedFile={selectedFile}
-                onFileSelect={setManuallySelectedFile}
+                onFileSelect={handleFileSelect}
               />
             </div>
             <div className={styles.codeViewerPanel}>
-              <CodeViewer 
-                files={files} 
+              <CodeViewer
+                files={files}
                 stage={stage}
                 selectedFile={selectedFile}
-                onFileSelect={setManuallySelectedFile}
+                onFileSelect={handleFileSelect}
                 currentFile={currentFile}
+                onFileUpdate={onFileUpdate}
+                openTabs={openTabs}
+                onTabClose={handleTabClose}
+                onCloseAllTabs={handleCloseAllTabs}
               />
             </div>
           </div>
         )}
         {activeTab === "preview" && (
-          <PreviewPanel 
-            previewUrl={previewUrl} 
+          <PreviewPanel
+            previewUrl={previewUrl}
             stage={stage}
             onRestart={onPreviewRestart}
             onStop={onPreviewStop}
