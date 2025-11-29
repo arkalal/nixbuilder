@@ -1,157 +1,159 @@
+// Chef-style Composer - Dark Mode Left Panel
 .composer {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  background: #1e1e20;
 }
 
+// Header with title and model selector
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-md);
-  border-bottom: 1px solid var(--color-border);
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #2d2d30;
+  flex-shrink: 0;
 }
 
 .headerLeft {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
+  gap: 12px;
 }
 
 .title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  background: linear-gradient(135deg, var(--color-accent), var(--color-primary-end));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
 }
 
+// Timeline area - scrollable messages
 .timeline {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--spacing-md);
-  
+  padding: 20px;
+
   &::-webkit-scrollbar {
     width: 6px;
   }
-  
+
   &::-webkit-scrollbar-track {
     background: transparent;
   }
-  
+
   &::-webkit-scrollbar-thumb {
-    background: var(--color-border);
+    background: #3c3c3c;
     border-radius: 3px;
-    
+
     &:hover {
-      background: var(--color-text-secondary);
+      background: #4c4c4c;
     }
   }
 }
 
+// Input container at bottom
 .inputContainer {
-  padding: var(--spacing-lg);
-  border-top: 1px solid var(--color-border);
+  padding: 16px 20px;
+  border-top: 1px solid #2d2d30;
   flex-shrink: 0;
-  background: var(--color-surface);
+  background: #1e1e20;
 }
 
 .form {
   width: 100%;
 }
 
+// Input wrapper - Chef style rounded box
 .inputWrapper {
   position: relative;
   display: flex;
   align-items: flex-end;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm);
-  background: var(--color-bg);
-  border: 2px solid var(--color-border);
+  gap: 10px;
+  padding: 12px 14px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
   border-radius: 12px;
-  transition: all var(--transition-base);
-  
+  transition: all 0.15s ease;
+
   &:focus-within {
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+    border-color: #4c4c4c;
   }
 }
 
+// Textarea
 .textarea {
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
-  color: var(--color-text);
-  font-family: var(--font-sans);
-  font-size: 0.9375rem;
+  color: #e0e0e0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
   line-height: 1.5;
   resize: none;
-  max-height: 200px;
+  max-height: 160px;
   overflow-y: auto;
-  padding: var(--spacing-xs);
-  
-  &::placeholder {
-    color: var(--color-text-secondary);
-  }
-  
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  
-  &::-webkit-scrollbar {
-    width: 4px;
-  }
-  
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  
-  &::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 2px;
-  }
-}
+  padding: 0;
 
-.sendButton {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  border: none;
-  background: linear-gradient(
-    135deg,
-    var(--color-primary-start),
-    var(--color-primary-end)
-  );
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-base);
-  
+  &::placeholder {
+    color: #606060;
+  }
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
-  
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #3c3c3c;
+    border-radius: 2px;
+  }
+}
+
+// Send button - Chef style
+.sendButton {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: #4c4c4c;
+  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   &:not(:disabled):hover {
-    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+    background: #5c5c5c;
   }
 }
 
 .icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .iconSpinning {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   animation: spin 1s linear infinite;
 }
 
@@ -164,20 +166,22 @@
   }
 }
 
+// Hint text
 .hint {
-  margin-top: var(--spacing-sm);
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
+  margin-top: 10px;
+  font-size: 11px;
+  color: #606060;
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  
+  gap: 6px;
+
   kbd {
-    padding: 2px 6px;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
+    padding: 2px 5px;
+    background: #2d2d30;
+    border: 1px solid #3c3c3c;
     border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 0.6875rem;
+    font-family: "SF Mono", "Monaco", monospace;
+    font-size: 10px;
+    color: #808080;
   }
 }

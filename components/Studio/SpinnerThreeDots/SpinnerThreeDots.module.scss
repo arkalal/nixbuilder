@@ -1,0 +1,27 @@
+// Chef-style SpinnerThreeDots animation
+// Based on: https://github.com/get-convex/chef
+
+.dot1,
+.dot2,
+.dot3 {
+  animation: spinnerDot 0.8s linear infinite;
+}
+
+.dot1 {
+  animation-delay: -0.8s;
+}
+
+.dot2 {
+  animation-delay: -0.65s;
+}
+
+.dot3 {
+  animation-delay: -0.5s;
+}
+
+@keyframes spinnerDot {
+  93.75%,
+  100% {
+    opacity: 0.2;
+  }
+}

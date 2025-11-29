@@ -1,0 +1,144 @@
+/**
+ * FileTree Styles - Chef-style file tree
+ */
+
+.fileTree {
+  height: 100%;
+  overflow-y: auto;
+  font-size: 13px;
+  background: var(--panel-background, #1e1e2e);
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  }
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 20px;
+}
+
+.emptyIcon {
+  width: 32px;
+  height: 32px;
+  opacity: 0.5;
+}
+
+.emptyText {
+  font-size: 13px;
+  margin: 0;
+}
+
+.folderItem,
+.fileItem {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  text-align: left;
+  gap: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background 0.1s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
+
+.fileItem {
+  padding-left: 26px;
+
+  &.selected {
+    background: rgba(59, 130, 246, 0.2);
+    color: #fff;
+
+    &:hover {
+      background: rgba(59, 130, 246, 0.25);
+    }
+  }
+
+  &.streaming {
+    color: #10b981;
+  }
+}
+
+.chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.folderIcon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #fbbf24;
+}
+
+.fileIcon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unsavedDot {
+  width: 6px;
+  height: 6px;
+  background: #f59e0b;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.streamingDot {
+  width: 6px;
+  height: 6px;
+  background: #10b981;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+}

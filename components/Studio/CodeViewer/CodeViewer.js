@@ -1,30 +1,31 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { FiFile, FiFolder, FiX, FiXCircle } from "react-icons/fi";
+import React, { useState, useRef, useCallback } from "react";
+import { FiFile, FiFolder, FiRotateCcw, FiChevronRight } from "react-icons/fi";
+import dynamic from "next/dynamic";
 import styles from "./CodeViewer.module.scss";
 
+// Dynamic import CodeMirror to avoid SSR issues
+const CodeMirrorEditor = dynamic(
+  () => import("../CodeMirrorEditor/CodeMirrorEditor"),
+  { ssr: false }
+);
+
+/**
+ * CodeViewer - Chef-style code editor with breadcrumb navigation
+ * Based on: https://github.com/get-convex/chef/blob/main/app/components/workbench/EditorPanel.tsx
+ */
+
 export default function CodeViewer({
-  files,
+  files = [],
   stage,
-  selectedFile: externalSelectedFile,
-  onFileSelect,
+  selectedFile,
   currentFile,
   onFileUpdate,
-  openTabs = [],
-  onTabClose,
-  onCloseAllTabs,
 }) {
-  const [internalSelectedFile, setInternalSelectedFile] = useState(null);
-  // Track edits per file: { [path]: { content: string, dirty: boolean } }
-  const [editState, setEditState] = useState({});
-  const tabsContainerRef = useRef(null);
-  const tabRefsRef = useRef({});
-  const textareaRef = useRef(null);
+  // Track unsaved changes per file
+  const [unsavedFiles, setUnsavedFiles] = useState(new Set());
   const scrollRef = useRef(null);
-
-  const selectedFilePath = externalSelectedFile || internalSelectedFile;
 
   // Merge currentFile (streaming) into files array
   const allFiles = React.useMemo(() => {
@@ -50,110 +51,70 @@ export default function CodeViewer({
     ];
   }, [files, currentFile]);
 
-  // Filter to show only open tabs
-  // If onTabClose is provided, respect openTabs (even if empty means no tabs)
-  // If no tab management, show all files
-  const displayedTabs = onTabClose
-    ? allFiles.filter((f) => openTabs.includes(f.path))
-    : allFiles;
-
+  // Get the file to display - selected file or latest
   const displayFile =
-    allFiles.find((f) => f.path === selectedFilePath) ||
-    (displayedTabs.length > 0 ? displayedTabs[displayedTabs.length - 1] : null);
+    allFiles.find((f) => f.path === selectedFile) ||
+    (allFiles.length > 0 ? allFiles[allFiles.length - 1] : null);
 
   const depPath = displayFile?.path;
   const depContent = displayFile?.content || "";
   const depStreaming = !!displayFile?.streaming;
 
-  // Get current edit state for displayed file
-  const currentEdit = depPath ? editState[depPath] : null;
-  const displayContent = currentEdit?.content ?? depContent;
-  const isDirty = currentEdit?.dirty ?? false;
+  // Check if current file has unsaved changes
+  const isDirty = depPath && unsavedFiles.has(depPath);
 
-  // Auto-scroll during streaming
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && depStreaming) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [depPath, depContent, depStreaming]);
+  // Create EditorDocument for CodeMirror (Chef's approach)
+  const editorDocument = React.useMemo(() => {
+    if (!displayFile) return null;
+    return {
+      value: displayFile.content || "",
+      filePath: displayFile.path,
+      isBinary: false,
+    };
+  }, [displayFile]);
 
-  // Auto-scroll tabs to active
-  useEffect(() => {
-    if (!depPath) return;
-    const el = tabRefsRef.current[depPath];
-    const container = tabsContainerRef.current;
-    if (el && container) {
-      el.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
+  // Handle editor content changes (Chef's approach)
+  const handleEditorChange = useCallback(
+    (update) => {
+      if (!depPath) return;
+      const originalContent = depContent;
+      const hasChanges = update.content !== originalContent;
+
+      setUnsavedFiles((prev) => {
+        const next = new Set(prev);
+        if (hasChanges) {
+          next.add(depPath);
+        } else {
+          next.delete(depPath);
+        }
+        return next;
       });
+
+      // Update file content
+      if (onFileUpdate && hasChanges) {
+        onFileUpdate(depPath, update.content);
+      }
+    },
+    [depPath, depContent, onFileUpdate]
+  );
+
+  // Generate breadcrumb segments from displayed file path - Chef style
+  const breadcrumbSegments = displayFile?.path
+    ? displayFile.path.split("/").filter(Boolean)
+    : [];
+
+  // Handle reset (discard changes) - Chef style
+  const handleReset = useCallback(() => {
+    if (depPath) {
+      setUnsavedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(depPath);
+        return next;
+      });
+      // Force re-render with original content
+      // This will be handled by CodeMirror's document prop change
     }
   }, [depPath]);
-
-  const filesWithNames = displayedTabs.map((file) => ({
-    ...file,
-    name: file.path.split("/").pop(),
-  }));
-
-  const handleTabClick = (file) => {
-    if (onFileSelect) {
-      onFileSelect(file.path);
-    } else {
-      setInternalSelectedFile(file.path);
-    }
-  };
-
-  const handleTabCloseClick = (e, filePath) => {
-    e.stopPropagation();
-    if (onTabClose) onTabClose(filePath);
-  };
-
-  const handleCloseAllClick = () => {
-    if (onCloseAllTabs) onCloseAllTabs();
-  };
-
-  const handleContentChange = (e) => {
-    if (!depPath) return;
-    setEditState((prev) => ({
-      ...prev,
-      [depPath]: { content: e.target.value, dirty: true },
-    }));
-  };
-
-  const handleSave = () => {
-    if (isDirty && depPath && onFileUpdate) {
-      onFileUpdate(depPath, displayContent);
-      setEditState((prev) => ({
-        ...prev,
-        [depPath]: { content: displayContent, dirty: false },
-      }));
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      handleSave();
-    }
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const start = e.target.selectionStart;
-      const end = e.target.selectionEnd;
-      const newVal =
-        displayContent.substring(0, start) +
-        "  " +
-        displayContent.substring(end);
-      setEditState((prev) => ({
-        ...prev,
-        [depPath]: { content: newVal, dirty: true },
-      }));
-      setTimeout(() => {
-        e.target.selectionStart = e.target.selectionEnd = start + 2;
-      }, 0);
-    }
-  };
 
   return (
     <div className={styles.codeViewer}>
@@ -171,94 +132,60 @@ export default function CodeViewer({
         </div>
       ) : (
         <>
+          {/* Chef-style header with breadcrumb and Save/Reset buttons */}
           <div className={styles.tabsHeader}>
-            <div className={styles.fileTabs} ref={tabsContainerRef}>
-              {filesWithNames.map((file) => (
-                <div
-                  key={file.path}
-                  className={`${styles.fileTab} ${
-                    displayFile?.path === file.path ? styles.active : ""
-                  } ${file.streaming ? styles.streaming : ""}`}
-                  onClick={() => handleTabClick(file)}
-                  ref={(el) => {
-                    if (el) tabRefsRef.current[file.path] = el;
-                  }}
-                >
-                  {file.streaming && <div className={styles.spinner} />}
-                  <FiFile className={styles.fileIcon} />
-                  <span className={styles.fileName}>{file.name}</span>
-                  {!file.streaming && onTabClose && (
-                    <button
-                      className={styles.tabCloseBtn}
-                      onClick={(e) => handleTabCloseClick(e, file.path)}
-                      title="Close tab"
+            {/* Breadcrumb navigation - Chef style */}
+            <div className={styles.breadcrumb}>
+              {breadcrumbSegments.map((segment, index) => {
+                const isLast = index === breadcrumbSegments.length - 1;
+                return (
+                  <span key={index} className={styles.breadcrumbItem}>
+                    {isLast && <FiFile className={styles.breadcrumbIcon} />}
+                    <span
+                      className={
+                        isLast
+                          ? styles.breadcrumbActive
+                          : styles.breadcrumbSegment
+                      }
                     >
-                      <FiX />
-                    </button>
-                  )}
-                </div>
-              ))}
+                      {segment}
+                    </span>
+                    {!isLast && (
+                      <FiChevronRight className={styles.breadcrumbSeparator} />
+                    )}
+                  </span>
+                );
+              })}
             </div>
-            {displayedTabs.length > 0 && onCloseAllTabs && (
-              <button
-                className={styles.closeAllBtn}
-                onClick={handleCloseAllClick}
-                title="Close all tabs"
-              >
-                <FiXCircle />
-                <span>Close All</span>
-              </button>
+
+            {/* Reset button - Chef style (changes are auto-saved via onChange) */}
+            {isDirty && (
+              <div className={styles.actionButtons}>
+                <button
+                  className={styles.resetBtn}
+                  onClick={handleReset}
+                  title="Reset changes"
+                >
+                  <FiRotateCcw />
+                  <span>Reset</span>
+                </button>
+              </div>
             )}
           </div>
 
           <div className={styles.codeContent} ref={scrollRef}>
-            {displayFile ? (
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={displayFile.path}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className={styles.codeWrapper}
-                >
-                  {displayFile.streaming ? (
-                    <div className={styles.streamingContent}>
-                      <pre className={styles.codePreview}>
-                        <code>{displayFile.content || ""}</code>
-                      </pre>
-                      <span className={styles.cursor}>▊</span>
-                    </div>
-                  ) : (
-                    <div className={styles.editorContainer}>
-                      <div className={styles.lineNumbers}>
-                        {displayContent.split("\n").map((_, i) => (
-                          <span key={i} className={styles.lineNumber}>
-                            {i + 1}
-                          </span>
-                        ))}
-                      </div>
-                      <textarea
-                        ref={textareaRef}
-                        className={styles.codeEditor}
-                        value={displayContent}
-                        onChange={handleContentChange}
-                        onBlur={handleSave}
-                        onKeyDown={handleKeyDown}
-                        spellCheck={false}
-                        autoComplete="off"
-                        autoCorrect="off"
-                        autoCapitalize="off"
-                      />
-                      {isDirty && (
-                        <div className={styles.editingIndicator}>
-                          <span>Editing • Ctrl+S to save</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </motion.div>
-              </AnimatePresence>
+            {editorDocument ? (
+              <div className={styles.codeWrapper}>
+                {/* Chef-style CodeMirror editor - handles both streaming and static content */}
+                <CodeMirrorEditor
+                  doc={editorDocument}
+                  editable={!depStreaming}
+                  scrollToDocAppend={depStreaming}
+                  onChange={handleEditorChange}
+                />
+                {/* Streaming cursor indicator */}
+                {depStreaming && <span className={styles.streamingIndicator} />}
+              </div>
             ) : (
               <div className={styles.noFileSelected}>
                 <FiFile className={styles.noFileIcon} />

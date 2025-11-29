@@ -1,0 +1,39 @@
+// CodeMirror Editor Wrapper - Chef style
+.editorWrapper {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #1a1a1c;
+
+  // CodeMirror container
+  .cm-editor {
+    height: 100%;
+  }
+
+  // Ensure proper scrolling
+  .cm-scroller {
+    overflow: auto !important;
+
+    &::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: #3c3c3c;
+      border-radius: 4px;
+
+      &:hover {
+        background: #4f4f4f;
+      }
+    }
+
+    &::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  }
+}

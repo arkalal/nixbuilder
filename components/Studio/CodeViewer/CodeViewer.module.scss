@@ -1,11 +1,13 @@
+// Chef-style Code Viewer - Dark Mode
 .codeViewer {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: #1e1e1e; // VS Code dark background
+  background: #1a1a1c;
 }
 
+// Empty state
 .emptyState {
   display: flex;
   flex-direction: column;
@@ -13,161 +15,141 @@
   justify-content: center;
   height: 100%;
   text-align: center;
-  padding: var(--spacing-xl);
+  padding: 40px;
   opacity: 0.7;
 }
 
 .emptyIcon {
-  width: 64px;
-  height: 64px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #252526;
-  border: 2px solid #3c3c3c;
-  border-radius: 50%;
-  margin-bottom: var(--spacing-lg);
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 12px;
+  margin-bottom: 16px;
 
   svg {
-    width: 32px;
-    height: 32px;
-    color: #858585;
+    width: 24px;
+    height: 24px;
+    color: #606060;
   }
 }
 
 .emptyTitle {
-  font-size: 1.125rem;
+  font-size: 14px;
   font-weight: 600;
-  margin-bottom: var(--spacing-xs);
+  margin-bottom: 8px;
   color: #cccccc;
 }
 
 .emptyText {
-  font-size: 0.875rem;
-  color: #858585;
+  font-size: 13px;
+  color: #606060;
 }
 
-// VS Code-like tabs header
+// Chef-style header with breadcrumb
 .tabsHeader {
   display: flex;
   align-items: center;
-  background: #252526;
-  border-bottom: 1px solid #1e1e1e;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #1a1a1c;
+  border-bottom: 1px solid #2d2d30;
   flex-shrink: 0;
-}
-
-.fileTabs {
-  display: flex;
-  flex: 1;
+  min-height: 40px;
   overflow-x: auto;
-
-  &::-webkit-scrollbar {
-    height: 3px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: #424242;
-    border-radius: 2px;
-  }
 }
 
-.fileTab {
+// Breadcrumb navigation - Chef style
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.breadcrumbItem {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
-  background: #2d2d2d;
-  border: none;
-  border-right: 1px solid #1e1e1e;
-  color: #969696;
-  font-size: 0.8125rem;
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.breadcrumbIcon {
+  width: 14px;
+  height: 14px;
+  color: #808080;
+  flex-shrink: 0;
+}
+
+.breadcrumbSegment {
+  color: #808080;
   cursor: pointer;
-  position: relative;
 
   &:hover {
-    background: #323232;
-    color: #cccccc;
-
-    .tabCloseBtn {
-      opacity: 1;
-    }
-  }
-
-  &.active {
-    background: #1e1e1e;
-    color: #ffffff;
-    border-bottom: 2px solid #007acc;
-
-    .tabCloseBtn {
-      opacity: 1;
-    }
-  }
-
-  &.streaming {
-    animation: pulse 2s ease-in-out infinite;
-    background: #2d2d2d;
+    color: #e0e0e0;
   }
 }
 
-.tabCloseBtn {
+.breadcrumbActive {
+  color: #e0e0e0;
+}
+
+.breadcrumbSeparator {
+  width: 12px;
+  height: 12px;
+  color: #4c4c4c;
+  margin: 0 2px;
+}
+
+// Save/Reset action buttons - Chef style
+.actionButtons {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  margin-left: 4px;
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  color: #858585;
-  cursor: pointer;
-  opacity: 0;
-  transition: all 0.15s ease;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 
-  &:hover {
-    background: #3c3c3c;
-    color: #ffffff;
-  }
+.saveBtn,
+.resetBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  color: #808080;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
 
   svg {
     width: 12px;
     height: 12px;
   }
-}
-
-.closeAllBtn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  margin: 4px 8px;
-  background: transparent;
-  border: 1px solid #3c3c3c;
-  border-radius: 4px;
-  color: #858585;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
 
   &:hover {
-    background: #3c3c3c;
-    color: #cccccc;
-    border-color: #505050;
+    background: #2d2d30;
+    color: #e0e0e0;
+    border-color: #4c4c4c;
   }
+}
 
-  svg {
-    width: 14px;
-    height: 14px;
-  }
+.saveBtn:hover {
+  color: #4ec9b0;
+  border-color: #4ec9b0;
+}
+
+.resetBtn:hover {
+  color: #dcdcaa;
+  border-color: #dcdcaa;
 }
 
 @keyframes pulse {
@@ -176,15 +158,16 @@
     opacity: 1;
   }
   50% {
-    opacity: 0.7;
+    opacity: 0.6;
   }
 }
 
+// Spinner for streaming tab
 .spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid #3c3c3c;
-  border-top-color: #007acc;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid #3c3c3c;
+  border-top-color: #dcdcaa;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -200,31 +183,48 @@
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-  color: #c5c5c5;
+  color: #808080;
 }
 
 .fileName {
   flex: 1;
 }
 
+// Code content area - single scrollbar container
 .codeContent {
   flex: 1;
-  overflow: auto;
-  background: #1e1e1e;
+  overflow: hidden; // Let child handle scrolling
+  background: #1a1a1c;
+}
+
+.codeWrapper {
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+// Editable code editor container - Chef style with line numbers
+.editorContainer {
+  display: flex;
+  height: 100%;
+  overflow: auto; // Single scrollbar here
+  font-family: "SF Mono", "Monaco", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  background: #1a1a1c;
 
   &::-webkit-scrollbar {
-    width: 14px;
-    height: 14px;
+    width: 8px;
+    height: 8px;
   }
 
   &::-webkit-scrollbar-track {
-    background: #1e1e1e;
+    background: transparent;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #424242;
-    border: 3px solid #1e1e1e;
-    border-radius: 7px;
+    background: #3c3c3c;
+    border-radius: 4px;
 
     &:hover {
       background: #4f4f4f;
@@ -232,61 +232,48 @@
   }
 
   &::-webkit-scrollbar-corner {
-    background: #1e1e1e;
+    background: transparent;
   }
 }
 
-.codeWrapper {
-  height: 100%;
-  position: relative;
-}
-
-// Editable code editor container
-.editorContainer {
-  display: flex;
-  height: 100%;
-  font-family: "Consolas", "Monaco", "Courier New", monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  background: #1e1e1e;
-}
-
+// Line numbers - Chef style (colored syntax)
 .lineNumbers {
   display: flex;
   flex-direction: column;
   padding: 16px 0;
-  padding-left: 16px;
+  padding-left: 20px;
   padding-right: 16px;
-  background: #1e1e1e;
-  border-right: 1px solid #2d2d2d;
-  color: #858585;
+  background: #1a1a1c;
+  color: #4c4c4c;
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
   text-align: right;
   user-select: none;
-  min-width: 50px;
+  min-width: 48px;
 }
 
 .lineNumber {
   display: block;
-  height: 21px;
+  line-height: 1.6;
 }
 
+// Code editor textarea
 .codeEditor {
   flex: 1;
   padding: 16px;
-  background: #1e1e1e;
+  padding-left: 0;
+  background: #1a1a1c;
   border: none;
   outline: none;
-  color: #d4d4d4;
+  color: #e0e0e0;
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
   resize: none;
   white-space: pre;
   overflow-wrap: normal;
-  overflow-x: auto;
+  overflow: hidden; // Parent handles scrolling
   tab-size: 2;
 
   &:focus {
@@ -294,15 +281,17 @@
   }
 }
 
+// Editing indicator
 .editingIndicator {
   position: absolute;
-  bottom: 8px;
-  right: 24px;
-  padding: 4px 8px;
-  background: #007acc;
-  color: #ffffff;
-  font-size: 0.75rem;
-  border-radius: 4px;
+  bottom: 12px;
+  right: 20px;
+  padding: 6px 12px;
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  color: #808080;
+  font-size: 11px;
+  border-radius: 6px;
   animation: fadeIn 0.2s ease;
 }
 
@@ -317,47 +306,51 @@
   }
 }
 
-// Streaming content (read-only)
-.streamingContent {
-  position: relative;
-  height: 100%;
+// Streaming code area - with line numbers like Chef
+.streamingCode {
+  flex: 1;
   padding: 16px;
-  overflow: auto;
+  padding-left: 0;
+  overflow: hidden; // Parent handles scrolling
+  position: relative;
 }
 
 .codePreview {
   margin: 0;
   padding: 0;
-  font-family: "Consolas", "Monaco", "Courier New", monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #d4d4d4;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  font-family: "SF Mono", "Monaco", "Consolas", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e0e0e0;
+  white-space: pre;
+  word-wrap: normal;
 
   code {
     font-family: inherit;
   }
 }
 
-.cursor {
-  display: inline-block;
+// Streaming indicator - Chef style
+.streamingIndicator {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
   width: 8px;
-  height: 18px;
-  background: #007acc;
-  margin-left: 2px;
-  animation: blink 1s step-end infinite;
-  vertical-align: text-bottom;
+  height: 8px;
+  background: #dcdcaa;
+  border-radius: 50%;
+  animation: pulse 1s ease-in-out infinite;
 }
 
-@keyframes blink {
+@keyframes pulse {
   0%,
-  50% {
-    opacity: 1;
-  }
-  51%,
   100% {
-    opacity: 0;
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
   }
 }
 
@@ -368,16 +361,16 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #858585;
+  color: #4c4c4c;
 
   p {
     margin-top: 12px;
-    font-size: 0.875rem;
+    font-size: 13px;
   }
 }
 
 .noFileIcon {
-  width: 48px;
-  height: 48px;
-  opacity: 0.5;
+  width: 32px;
+  height: 32px;
+  opacity: 0.4;
 }

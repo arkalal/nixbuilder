@@ -5,6 +5,16 @@ import StudioLayout from "../../../../components/Studio/StudioLayout/StudioLayou
 import Composer from "../../../../components/Studio/Composer/Composer";
 import RightPanel from "../../../../components/Studio/RightPanel/RightPanel";
 import styles from "./Studio.module.scss";
+import {
+  addAction,
+  completeAction,
+  setCurrentStreamingFile,
+  clearActions,
+  markAllActionsComplete,
+  syncFilesWithEditor,
+  setStreamingDocument,
+  clearEditorState,
+} from "../../../../stores/workbench";
 
 export default function StudioPage() {
   const [messages, setMessages] = useState([]);
@@ -13,6 +23,8 @@ export default function StudioPage() {
   const [logs, setLogs] = useState([]);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [activeTab, setActiveTab] = useState("code"); // code | preview | logs
+  const [selectedFileFromWorkbench, setSelectedFileFromWorkbench] =
+    useState(null);
   const [selectedModel, setSelectedModel] = useState(
     "anthropic/claude-3.5-sonnet"
   );
@@ -39,12 +51,26 @@ export default function StudioPage() {
   const filesRef = useRef([]);
   useEffect(() => {
     filesRef.current = files;
+    // Sync files with editor store (Chef pattern)
+    if (files.length > 0) {
+      syncFilesWithEditor(files);
+    }
   }, [files]);
+
+  // Keep latest completedFiles in a ref for event handlers to access latest value
+  const completedFilesRef = useRef([]);
+  useEffect(() => {
+    completedFilesRef.current = completedFiles;
+  }, [completedFiles]);
 
   // Track user-edited files to protect them from AI overwrites
   const userEditedFilesRef = useRef(new Set());
+  // Track existing files before generation to determine Edit vs Create
+  const [existingFilesSnapshot, setExistingFilesSnapshot] = useState([]);
   // Deduplicate last queued completed file for brief display
   const lastQueuedPathRef = useRef(null);
+  // Track which files have been added to nanostores actions (prevents batch creation)
+  const processedActionsRef = useRef(new Set());
   // Monotonic ID generator to avoid duplicate React keys when events happen within the same millisecond
   const idCounterRef = useRef(0);
   const generateId = () => {
@@ -74,15 +100,22 @@ export default function StudioPage() {
   }, []);
 
   // Parse files from streamingCode in real-time (open-lovable approach, refactored to avoid loops)
+  // Also run when stage changes to "done" to capture any final files
   useEffect(() => {
-    if (!streamingCode || stage !== "generating") return;
+    if (!streamingCode) return;
+    // Skip if idle (not generating yet) but allow "generating" and "done"
+    if (stage === "idle" || stage === "planning") return;
 
     // Extract ALL completed files from accumulated stream
+    // Chef-style: Clean content at parse time, not display time
     const fileRegex = /<file path="([^"]+)">([^]*?)<\/file>/g;
     let match;
     const matches = [];
     while ((match = fileRegex.exec(streamingCode)) !== null) {
-      matches.push({ path: match[1], content: match[2].trim() });
+      // Normalize content: trim whitespace, ensure exactly one trailing newline (Chef approach)
+      const rawContent = match[2];
+      const cleanContent = rawContent.trim() + "\n";
+      matches.push({ path: match[1], content: cleanContent });
     }
 
     // Apply updates/additions using functional update to avoid dependency loops
@@ -113,7 +146,9 @@ export default function StudioPage() {
             ? "json"
             : "text";
         const idx = indexByPath.get(m.path);
-        if (typeof idx === "number") {
+        const isEdit = typeof idx === "number";
+
+        if (isEdit) {
           // Update existing file (not user-edited)
           out[idx] = {
             ...out[idx],
@@ -131,14 +166,73 @@ export default function StudioPage() {
             createdAt: new Date().toISOString(),
             completed: true,
           });
-          completedEntries.push({ path: m.path, content: m.content });
         }
+
+        // Add to completedEntries for Workbench display (both new and edited files)
+        completedEntries.push({ path: m.path, content: m.content, isEdit });
       }
       return out;
     });
 
+    // Update nanostores ONLY for NEWLY completed files (Chef style - progressive, not batch)
+    // This prevents all files appearing at once
+    matches.forEach((m) => {
+      const isUserEdited = userEditedFilesRef.current.has(m.path);
+      const isExistingEnv =
+        m.path === ".env" && filesRef.current.some((f) => f.path === ".env");
+      const alreadyProcessed = processedActionsRef.current.has(m.path);
+
+      if (!isUserEdited && !isExistingEnv && !alreadyProcessed) {
+        const isEdit = existingFilesSnapshot.some((f) => f.path === m.path);
+        // Mark as processed BEFORE adding to prevent duplicates
+        processedActionsRef.current.add(m.path);
+        // Add action with "complete" status for newly completed file
+        addAction({
+          path: m.path,
+          content: m.content,
+          isEdit,
+          status: "complete",
+        });
+      }
+    });
+
     if (completedEntries.length > 0) {
-      setCompletedFiles((prev) => [...prev, ...completedEntries]);
+      // Deduplicate: only add files not already in completedFiles
+      setCompletedFiles((prev) => {
+        const existingPaths = new Set(prev.map((f) => f.path));
+        const newEntries = completedEntries.filter(
+          (entry) => !existingPaths.has(entry.path)
+        );
+        if (newEntries.length === 0) return prev;
+        return [...prev, ...newEntries];
+      });
+
+      // ALSO update the last message's completedFilesSnapshot in real-time (Chef-style persistence)
+      setMessages((prev) => {
+        if (prev.length === 0) return prev;
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg.role !== "assistant") return prev;
+
+        const existingPaths = new Set(
+          (lastMsg.completedFilesSnapshot || []).map((f) => f.path)
+        );
+        const newEntries = completedEntries.filter(
+          (entry) => !existingPaths.has(entry.path)
+        );
+        if (newEntries.length === 0) return prev;
+
+        return prev.map((msg, idx) => {
+          if (idx !== prev.length - 1) return msg;
+          return {
+            ...msg,
+            completedFilesSnapshot: [
+              ...(msg.completedFilesSnapshot || []),
+              ...newEntries,
+            ],
+          };
+        });
+      });
+
       setActiveTab((prev) => prev || "code");
     }
 
@@ -160,7 +254,9 @@ export default function StudioPage() {
       const hasClose = remainder.includes("</file>");
       if (!hasClose) {
         const filePath = lastOpenMatch.path;
-        const partialContent = remainder;
+        // Chef-style: Clean streaming content - trim trailing whitespace only
+        // Don't add trailing newline for streaming (it's incomplete)
+        const partialContent = remainder.trimEnd();
         const fileExt = filePath.split(".").pop();
         const fileType =
           fileExt === "jsx" || fileExt === "js"
@@ -173,17 +269,28 @@ export default function StudioPage() {
         console.log(
           `[Frontend] 📝 STREAMING: ${filePath} (${partialContent.length} chars)`
         );
+        const isEdit = existingFilesSnapshot.some((f) => f.path === filePath);
         setCurrentFile({
           path: filePath,
           content: partialContent,
           type: fileType,
         });
+        // Update nanostores with current streaming file (synchronous)
+        setCurrentStreamingFile({
+          path: filePath,
+          content: partialContent,
+          type: fileType,
+          isEdit,
+        });
+        // Sync streaming document with editor store (Chef pattern)
+        setStreamingDocument(filePath, partialContent);
         // Active streaming takes precedence over any queued displays
         displayQueueRef.current = [];
         isDisplayingRef.current = false;
       } else {
         // Last opened file has closed; clear current streaming indicator
         setCurrentFile(null);
+        setCurrentStreamingFile(null);
       }
     } else {
       // No incomplete file - queue the most recent completed file for brief display (ensures visibility)
@@ -213,7 +320,7 @@ export default function StudioPage() {
         setCurrentFile(null);
       }
     }
-  }, [streamingCode, stage, processDisplayQueue]);
+  }, [streamingCode, stage, processDisplayQueue, existingFilesSnapshot]);
 
   // Sandbox lifecycle functions
   const startSandboxLogs = useCallback(async (id) => {
@@ -483,7 +590,11 @@ export default function StudioPage() {
           setStreamingCode(""); // Clear streaming code on new generation
           setCurrentFile(null);
           setCompletedFiles([]); // Clear per-generation left panel blocks only
+          clearActions(); // Clear nanostores workbench actions (synchronous)
+          processedActionsRef.current.clear(); // Clear processed actions tracker
           // IMPORTANT: Do NOT clear files; we keep existing project for iterative edits
+          // Snapshot existing files for Edit vs Create detection in Workbench
+          setExistingFilesSnapshot(filesRef.current.slice());
           // Reset display queue
           displayQueueRef.current = [];
           isDisplayingRef.current = false;
@@ -730,9 +841,11 @@ export default function StudioPage() {
             const activities = (msg.activities || []).map((a) =>
               a.status === "in_progress" ? { ...a, status: "completed" } : a
             );
+            // Use ref to get latest completedFiles value (avoid stale closure)
+            const latestCompletedFiles = completedFilesRef.current;
             const snapshot =
-              completedFiles && completedFiles.length
-                ? [...completedFiles]
+              latestCompletedFiles && latestCompletedFiles.length
+                ? [...latestCompletedFiles]
                 : msg.completedFilesSnapshot || [];
             return {
               ...msg,
@@ -759,7 +872,9 @@ export default function StudioPage() {
           let added = 0;
           let updated = 0;
           let protected_ = 0;
-          for (const [path, content] of backendEntries) {
+          for (const [path, rawContent] of backendEntries) {
+            // Chef-style: Normalize content - trim + single trailing newline
+            const content = rawContent.trim() + "\n";
             const existing = existingByPath.get(path);
 
             // PROTECTION: Never overwrite user-edited files or .env files
@@ -836,6 +951,13 @@ export default function StudioPage() {
         // Stage set to 'done' so user can manually start preview when ready
         setStage("done");
 
+        // IMPORTANT: Mark ALL nanostores actions as complete
+        // This ensures no files remain in "pending" or "running" state
+        requestAnimationFrame(() => {
+          markAllActionsComplete();
+          setCurrentStreamingFile(null);
+        });
+
         break;
 
       case "error":
@@ -863,6 +985,12 @@ export default function StudioPage() {
         console.warn("Unknown SSE event:", event, data);
     }
   };
+
+  // Handle file click from Workbench - switch to code tab and select file
+  const handleFileClick = useCallback((filePath) => {
+    setActiveTab("code");
+    setSelectedFileFromWorkbench(filePath);
+  }, []);
 
   // Handle file content updates from the editor
   const handleFileUpdate = useCallback((filePath, newContent) => {
@@ -920,6 +1048,8 @@ export default function StudioPage() {
             streamingCode={streamingCode}
             currentFile={currentFile}
             completedFiles={completedFiles}
+            existingFiles={existingFilesSnapshot}
+            onFileClick={handleFileClick}
           />
         }
         rightPanel={
@@ -934,6 +1064,8 @@ export default function StudioPage() {
             onPreviewRestart={createAndStartSandbox}
             onPreviewStop={stopSandbox}
             onFileUpdate={handleFileUpdate}
+            selectedFileFromWorkbench={selectedFileFromWorkbench}
+            onClearWorkbenchSelection={() => setSelectedFileFromWorkbench(null)}
           />
         }
       />

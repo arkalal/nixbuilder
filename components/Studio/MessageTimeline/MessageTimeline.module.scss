@@ -1,9 +1,12 @@
+// Chef-style Timeline - Clean, minimal design in dark mode
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: 20px;
+  padding: 4px 0;
 }
 
+// Empty state
 .emptyState {
   display: flex;
   flex-direction: column;
@@ -11,166 +14,135 @@
   justify-content: center;
   height: 100%;
   text-align: center;
-  padding: var(--spacing-xl);
-  opacity: 0.7;
+  padding: 40px 20px;
+  opacity: 0.8;
 }
 
 .emptyIcon {
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface);
-  border: 2px solid var(--color-border);
-  border-radius: 50%;
-  margin-bottom: var(--spacing-lg);
-  
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 16px;
+  margin-bottom: 16px;
+
   svg {
-    width: 32px;
-    height: 32px;
-    color: var(--color-text-secondary);
+    width: 28px;
+    height: 28px;
+    color: #dcdcaa;
   }
 }
 
 .emptyTitle {
   font-size: 1.125rem;
   font-weight: 600;
-  margin-bottom: var(--spacing-xs);
-  color: var(--color-text);
+  margin-bottom: 8px;
+  color: #e0e0e0;
 }
 
 .emptyText {
   font-size: 0.875rem;
-  color: var(--color-text-secondary);
+  color: #808080;
   max-width: 280px;
+  line-height: 1.5;
 }
 
-.message {
+// Message wrapper - Chef style
+.messageWrapper {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-md);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
+  padding: 16px;
+  width: 100%;
   border-radius: 12px;
-  transition: all var(--transition-base);
-  
-  &:hover {
-    border-color: var(--color-text-secondary);
+  border: 1px solid #3c3c3c;
+  background: transparent;
+
+  &.userMessage {
+    background: #2d2d30;
+  }
+
+  &.assistantMessage {
+    background: transparent;
+    border-color: transparent;
+    padding-left: 0;
+    padding-right: 0;
   }
 }
 
-.userMessage {
-  border-left: 3px solid var(--color-accent);
-}
-
-.assistantMessage {
-  border-left: 3px solid var(--color-primary-start);
-}
-
-.messageHeader {
+// Three dots streaming indicator - Chef style
+.streamingIndicator {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
+  width: 100%;
+  justify-content: center;
+  padding: 16px 0;
+  color: #808080;
 }
 
-.avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+.threeDots {
+  width: 36px;
+  height: 36px;
+}
+
+// User message bubble - Chef style
+.userBubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 12px;
+}
+
+.userAvatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  background: linear-gradient(
-    135deg,
-    var(--color-primary-start),
-    var(--color-primary-end)
-  );
-  color: white;
-  
+  background: #404040;
+
   svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
+    color: #cccccc;
   }
 }
 
-.userMessage .avatar {
-  background: var(--color-accent);
-}
-
-.messageInfo {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.roleName {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.timestamp {
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-}
-
-.messageContent {
-  font-size: 0.9375rem;
+.userContent {
+  font-size: 14px;
   line-height: 1.6;
-  color: var(--color-text);
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  color: #e0e0e0;
+  padding-top: 6px;
 }
 
-.activities {
+// Assistant content - clean text flow
+.assistantContent {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
-  margin-top: var(--spacing-xs);
-  padding-top: var(--spacing-sm);
-  border-top: 1px solid var(--color-border);
+  gap: 16px;
 }
 
-.activity {
+// Loading state
+.loadingState {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  font-size: 0.8125rem;
-  padding: var(--spacing-xs);
-  background: var(--color-surface);
-  border-radius: 6px;
+  gap: 10px;
+  padding: 12px 0;
+  color: #808080;
+  font-size: 14px;
 }
 
-.activityIcon {
+.loadingSpinner {
   width: 16px;
   height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.iconSuccess {
-  width: 14px;
-  height: 14px;
-  color: #22c55e;
-}
-
-.iconSpinning {
-  width: 14px;
-  height: 14px;
-  color: var(--color-accent);
+  color: #dcdcaa;
   animation: spin 1s linear infinite;
-}
-
-.iconError {
-  width: 14px;
-  height: 14px;
-  color: #ef4444;
 }
 
 @keyframes spin {
@@ -182,20 +154,38 @@
   }
 }
 
-.activityMessage {
-  color: var(--color-text-secondary);
-  flex: 1;
+// Plan text - numbered list like Chef
+.planText {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #cccccc;
 }
 
-.loadingMessage {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  color: var(--color-text-secondary);
-  font-style: italic;
-  
-  svg {
-    width: 16px;
-    height: 16px;
+.planLine {
+  margin-bottom: 4px;
+
+  &:last-child {
+    margin-bottom: 0;
   }
+}
+
+// "Let's start:" separator
+.letsStart {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e0e0e0;
+  margin-top: 4px;
+}
+
+// Prior message workbench wrapper
+.priorWorkbench {
+  margin-top: 12px;
+}
+
+// Final text after code generation
+.finalText {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #cccccc;
 }

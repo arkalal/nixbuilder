@@ -10,7 +10,12 @@ import {
 } from "react-icons/fi";
 import styles from "./FileExplorer.module.scss";
 
-export default function FileExplorer({ files, selectedFile, onFileSelect }) {
+export default function FileExplorer({
+  files,
+  selectedFile,
+  onFileSelect,
+  currentStreamingFile, // Currently streaming file path
+}) {
   const [expandedFolders, setExpandedFolders] = useState(
     new Set(["root", "app", "components"])
   );
@@ -93,21 +98,25 @@ export default function FileExplorer({ files, selectedFile, onFileSelect }) {
         })}
 
         {/* Render files */}
-        {nodeFiles.map((file) => (
-          <div
-            key={file.path}
-            className={`${styles.fileRow} ${
-              selectedFile === file.path ? styles.selected : ""
-            }`}
-            style={{ paddingLeft: `${level * 16 + 32}px` }}
-            onClick={() => onFileSelect(file.path)}
-          >
-            {getFileIcon(file.path)}
-            <span className={styles.fileName}>
-              {file.path.split("/").pop()}
-            </span>
-          </div>
-        ))}
+        {nodeFiles.map((file) => {
+          const isStreaming = currentStreamingFile === file.path;
+          return (
+            <div
+              key={file.path}
+              className={`${styles.fileRow} ${
+                selectedFile === file.path ? styles.selected : ""
+              } ${isStreaming ? styles.streaming : ""}`}
+              style={{ paddingLeft: `${level * 16 + 32}px` }}
+              onClick={() => onFileSelect(file.path)}
+            >
+              {getFileIcon(file.path)}
+              <span className={styles.fileName}>
+                {file.path.split("/").pop()}
+              </span>
+              {isStreaming && <span className={styles.streamingDot} />}
+            </div>
+          );
+        })}
       </>
     );
   };
@@ -123,9 +132,9 @@ export default function FileExplorer({ files, selectedFile, onFileSelect }) {
 
   return (
     <div className={styles.fileExplorer}>
+      {/* Chef-style "Files" header */}
       <div className={styles.header}>
-        <FiFolder />
-        <span>Explorer</span>
+        <span>Files</span>
       </div>
       <div className={styles.tree}>{renderTree(fileTree)}</div>
     </div>

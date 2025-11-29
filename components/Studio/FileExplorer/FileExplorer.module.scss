@@ -1,49 +1,45 @@
-// VS Code-like File Explorer Theme
+// Chef-style File Explorer - Dark Mode
 .fileExplorer {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #252526;
-  border-right: 1px solid #1e1e1e;
+  background: #1a1a1c;
 }
 
+// "Files" header - Chef style
 .header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #252526;
-  border-bottom: 1px solid #1e1e1e;
-  font-size: 11px;
-  font-weight: 600;
-  color: #bbbbbb;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  gap: 6px;
+  padding: 12px 14px;
+  background: #1a1a1c;
+  font-size: 12px;
+  font-weight: 500;
+  color: #808080;
 
   svg {
     width: 14px;
     height: 14px;
-    color: #c5c5c5;
+    color: #808080;
   }
 }
 
 .tree {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 0 8px 8px 8px;
 
   &::-webkit-scrollbar {
-    width: 10px;
+    width: 6px;
   }
 
   &::-webkit-scrollbar-track {
-    background: #252526;
+    background: transparent;
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #424242;
-    border: 2px solid #252526;
-    border-radius: 5px;
+    background: #3c3c3c;
+    border-radius: 3px;
 
     &:hover {
       background: #4f4f4f;
@@ -51,31 +47,35 @@
   }
 }
 
+// Folder row - Chef style with carets
 .folderRow {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  padding: 4px 8px;
   cursor: pointer;
   user-select: none;
   transition: background 0.1s ease;
   font-size: 13px;
-  height: 22px;
+  height: 26px;
+  border-radius: 6px;
+  margin-bottom: 2px;
 
   &:hover {
-    background: #2a2d2e;
+    background: #2d2d30;
   }
 
   &:focus {
     outline: none;
-    background: #094771;
+    background: #2d2d30;
   }
 }
 
+// Caret icon for expand/collapse
 .chevron {
   width: 16px;
   height: 16px;
-  color: #c5c5c5;
+  color: #808080;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -88,9 +88,9 @@
 }
 
 .folderIcon {
-  width: 16px;
-  height: 16px;
-  color: #dcb67a; // VS Code folder color (yellow/gold)
+  width: 14px;
+  height: 14px;
+  color: #808080;
   flex-shrink: 0;
 }
 
@@ -100,38 +100,71 @@
   font-size: 13px;
 }
 
+// File row - Chef style
 .fileRow {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: 6px;
+  padding: 4px 8px;
   cursor: pointer;
   user-select: none;
   transition: background 0.1s ease;
   font-size: 13px;
-  height: 22px;
+  height: 26px;
+  border-radius: 6px;
+  margin-bottom: 2px;
 
   &:hover {
-    background: #2a2d2e;
+    background: #2d2d30;
   }
 
   &.selected {
-    background: #094771;
+    background: #2d2d30;
 
     .fileName {
       color: #ffffff;
     }
   }
 
+  // Streaming file indicator - orange dot like Chef
+  &.streaming {
+    .fileName {
+      color: #dcdcaa;
+    }
+  }
+
   &:focus {
     outline: none;
-    background: #094771;
+    background: #2d2d30;
   }
 
   svg {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
+  }
+}
+
+// Streaming indicator dot (orange pulsing dot like Chef)
+.streamingDot {
+  width: 6px;
+  height: 6px;
+  background: #dcdcaa;
+  border-radius: 50%;
+  margin-left: auto;
+  margin-right: 4px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
   }
 }
 
@@ -143,47 +176,48 @@
   font-size: 13px;
 }
 
-// VS Code File Type Icons - realistic colors
+// File type icons - subtle colors
 .iconjs {
-  color: #f1dd3f; // JavaScript yellow
+  color: #dcdcaa;
 }
 
 .iconjsx {
-  color: #61dafb; // React cyan/blue
+  color: #4fc1ff;
 }
 
 .iconscss {
-  color: #ce679a; // SCSS pink
+  color: #ce679a;
 }
 
 .iconcss {
-  color: #42a5f5; // CSS blue
+  color: #4fc1ff;
 }
 
 .iconjson {
-  color: #fbc02d; // JSON yellow
+  color: #dcdcaa;
 }
 
 .iconmd {
-  color: #42a5f5; // Markdown blue
+  color: #808080;
 }
 
 .iconenv {
-  color: #fdd835; // Env yellow
+  color: #dcdcaa;
 }
 
 .iconmjs {
-  color: #f1dd3f; // MJS yellow (same as JS)
+  color: #dcdcaa;
 }
 
 .iconFile {
-  color: #c5c5c5; // Default gray
+  color: #808080;
 }
 
 .iconhtml {
-  color: #e44d26; // HTML orange
+  color: #e06c75;
 }
 
+// Empty state
 .empty {
   display: flex;
   flex-direction: column;
@@ -192,18 +226,18 @@
   height: 100%;
   padding: 20px;
   text-align: center;
-  background: #252526;
+  background: #1a1a1c;
 }
 
 .emptyIcon {
-  width: 48px;
-  height: 48px;
-  color: #5a5a5a;
+  width: 32px;
+  height: 32px;
+  color: #4c4c4c;
   opacity: 0.6;
   margin-bottom: 12px;
 }
 
 .emptyText {
-  font-size: 13px;
-  color: #858585;
+  font-size: 12px;
+  color: #606060;
 }

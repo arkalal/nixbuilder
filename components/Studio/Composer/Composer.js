@@ -6,9 +6,21 @@ import { FiSend, FiLoader } from "react-icons/fi";
 import StageIndicator from "../StageIndicator/StageIndicator";
 import MessageTimeline from "../MessageTimeline/MessageTimeline";
 import ModelSelector from "../ModelSelector/ModelSelector";
+import StreamingStatus from "../StreamingStatus/StreamingStatus";
 import styles from "./Composer.module.scss";
 
-export default function Composer({ messages, stage, onSendMessage, selectedModel, onModelChange, streamingCode, currentFile, completedFiles }) {
+export default function Composer({
+  messages,
+  stage,
+  onSendMessage,
+  selectedModel,
+  onModelChange,
+  streamingCode,
+  currentFile,
+  completedFiles,
+  existingFiles = [],
+  onFileClick,
+}) {
   const [inputValue, setInputValue] = useState("");
   const textareaRef = useRef(null);
   const timelineRef = useRef(null);
@@ -28,7 +40,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
 
     onSendMessage(inputValue.trim());
     setInputValue("");
-    
+
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -44,7 +56,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
 
   const handleInput = (e) => {
     setInputValue(e.target.value);
-    
+
     // Auto-resize textarea
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -66,13 +78,19 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
       </div>
 
       <div className={styles.timeline} ref={timelineRef}>
-        <MessageTimeline 
+        <MessageTimeline
           messages={messages}
           streamingCode={streamingCode}
           currentFile={currentFile}
           completedFiles={completedFiles}
+          existingFiles={existingFiles}
+          onFileClick={onFileClick}
+          stage={stage}
         />
       </div>
+
+      {/* Streaming Status Bar */}
+      <StreamingStatus stage={stage} messageCount={messages.length} />
 
       <div className={styles.inputContainer}>
         <form onSubmit={handleSubmit} className={styles.form}>
@@ -106,7 +124,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
             </motion.button>
           </div>
         </form>
-        
+
         <div className={styles.hint}>
           <kbd>Enter</kbd> to send • <kbd>Shift + Enter</kbd> for new line
         </div>

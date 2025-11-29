@@ -1,0 +1,59 @@
+// Chef-style StreamingIndicator - "Cooking..." status bar
+// Based on: https://github.com/get-convex/chef
+
+.streamingStatus {
+  width: 100%;
+  padding: 6px 20px;
+  background: #252526;
+  border-top: 1px solid #2d2d30;
+}
+
+.content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.iconSpinning {
+  color: #808080;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.iconSuccess {
+  color: #4ec9b0;
+}
+
+.iconWarning {
+  color: #dcdcaa;
+}
+
+.iconError {
+  color: #f14c4c;
+}
+
+.message {
+  color: #808080;
+  flex: 1;
+}

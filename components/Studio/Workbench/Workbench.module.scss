@@ -1,0 +1,225 @@
+// Chef-style Artifact/Workbench Component - Dark Mode
+// Based on: https://github.com/get-convex/chef
+
+.artifact {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #3c3c3c;
+  background: #252526;
+}
+
+// Header row
+.artifactHeader {
+  display: flex;
+}
+
+.artifactButton {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  overflow: hidden;
+  background: #252526;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: #2d2d30;
+  }
+}
+
+.artifactIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: #808080;
+  }
+}
+
+.fileIcon {
+  color: #cccccc;
+}
+
+.artifactDivider {
+  width: 1px;
+  background: #3c3c3c;
+}
+
+.artifactInfo {
+  flex: 1;
+  padding: 14px 20px;
+  text-align: left;
+}
+
+.artifactTitle {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #e0e0e0;
+}
+
+.artifactSubtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #808080;
+}
+
+.toggleButton {
+  display: flex;
+  align-items: center;
+  background: #252526;
+  border: none;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: #2d2d30;
+  }
+}
+
+.toggleIcon {
+  padding: 16px;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: #808080;
+  }
+}
+
+// Spinner animation - Chef style
+.spinner {
+  animation: spin 0.8s linear infinite;
+  color: #dcdcaa;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// Actions wrapper
+.actionsWrapper {
+  overflow: hidden;
+}
+
+.actionsDivider {
+  height: 1px;
+  background: #3c3c3c;
+}
+
+.actionsContent {
+  padding: 20px;
+  text-align: left;
+  background: #1e1e20;
+}
+
+// Action list
+.actionList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.actionItem {
+  list-style: none;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.statusIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+
+  svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+// Status colors - Chef style
+.statusPending {
+  color: #6e6e6e;
+
+  svg {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+.statusRunning {
+  color: #dcdcaa;
+}
+
+.statusComplete {
+  color: #4ec9b0;
+}
+
+.statusAborted {
+  color: #808080;
+}
+
+.statusError {
+  color: #f14c4c;
+}
+
+.actionText {
+  color: #cccccc;
+}
+.actionLabel {
+  color: #cccccc;
+  flex-shrink: 0;
+}
+
+// File path - clickable code style like Chef
+.filePath {
+  color: #9cdcfe;
+  font-family: "SF Mono", "Monaco", "Consolas", monospace;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+
+  &:hover {
+    color: #4fc1ff;
+    text-decoration: underline;
+  }
+}
+
+.iconSuccess {
+  color: #4ec9b0;
+}
+
+.iconError {
+  color: #f14c4c;
+}
+
+.iconPending {
+  color: #6e6e6e;
+}

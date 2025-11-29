@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { FiCode, FiEye, FiTerminal } from "react-icons/fi";
-import FileExplorer from "../FileExplorer/FileExplorer";
-import CodeViewer from "../CodeViewer/CodeViewer";
+import EditorPanel from "../EditorPanel/EditorPanel";
 import PreviewPanel from "../PreviewPanel/PreviewPanel";
 import LogsPanel from "../LogsPanel/LogsPanel";
+import { setSelectedFile } from "../../../stores/workbench";
 import styles from "./RightPanel.module.scss";
 
 const tabs = [
@@ -26,70 +26,29 @@ export default function RightPanel({
   onPreviewRestart,
   onPreviewStop,
   onFileUpdate, // Callback when file content is edited
+  selectedFileFromWorkbench, // File selected from left panel Workbench
+  onClearWorkbenchSelection, // Clear workbench selection after handling
 }) {
-  const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
-  const [closedTabs, setClosedTabs] = useState(new Set()); // Track explicitly closed tabs
-
-  // Compute open tabs: all file paths minus explicitly closed ones
-  const openTabs = React.useMemo(() => {
-    const allPaths = files.map((f) => f.path);
-    // Filter out explicitly closed tabs
-    return allPaths.filter((path) => !closedTabs.has(path));
-  }, [files, closedTabs]);
-
-  // Auto-select current streaming file, or latest completed file, or manual selection
-  const selectedFile = React.useMemo(() => {
-    if (stage === "generating") {
-      // Prioritize currentFile being streamed
-      if (currentFile?.path) return currentFile.path;
-      // Otherwise, show latest completed file
-      if (files.length > 0) return files[files.length - 1].path;
-    }
-    return manuallySelectedFile;
-  }, [stage, currentFile, files, manuallySelectedFile]);
-
-  // Handle file selection from explorer (opens tab and selects)
-  const handleFileSelect = useCallback((filePath) => {
-    setManuallySelectedFile(filePath);
-    // Remove from closed tabs to ensure it's open
-    setClosedTabs((prev) => {
-      if (prev.has(filePath)) {
-        const next = new Set(prev);
-        next.delete(filePath);
-        return next;
+  // Handle file selection from Workbench (left panel)
+  useEffect(() => {
+    if (selectedFileFromWorkbench) {
+      setSelectedFile(selectedFileFromWorkbench);
+      if (onClearWorkbenchSelection) {
+        onClearWorkbenchSelection();
       }
-      return prev;
-    });
-  }, []);
+    }
+  }, [selectedFileFromWorkbench, onClearWorkbenchSelection]);
 
-  // Handle tab close
-  const handleTabClose = useCallback(
+  // Handle file reset (reload from files array)
+  const handleFileReset = useCallback(
     (filePath) => {
-      // Add to closed tabs
-      setClosedTabs((prev) => {
-        const next = new Set(prev);
-        next.add(filePath);
-        return next;
-      });
-      // If closing the selected file, select another open tab
-      if (manuallySelectedFile === filePath) {
-        const remainingOpen = openTabs.filter((p) => p !== filePath);
-        if (remainingOpen.length > 0) {
-          setManuallySelectedFile(remainingOpen[remainingOpen.length - 1]);
-        } else {
-          setManuallySelectedFile(null);
-        }
+      const file = files.find((f) => f.path === filePath);
+      if (file && onFileUpdate) {
+        onFileUpdate(filePath, file.content);
       }
     },
-    [manuallySelectedFile, openTabs]
+    [files, onFileUpdate]
   );
-
-  // Handle close all tabs
-  const handleCloseAllTabs = useCallback(() => {
-    // Add all current file paths to closed tabs
-    setClosedTabs(new Set(files.map((f) => f.path)));
-    setManuallySelectedFile(null);
-  }, [files]);
 
   return (
     <div className={styles.rightPanel}>
@@ -120,28 +79,13 @@ export default function RightPanel({
 
       <div className={styles.tabContent}>
         {activeTab === "code" && (
-          <div className={styles.codeTabLayout}>
-            <div className={styles.fileExplorerPanel}>
-              <FileExplorer
-                files={files}
-                selectedFile={selectedFile}
-                onFileSelect={handleFileSelect}
-              />
-            </div>
-            <div className={styles.codeViewerPanel}>
-              <CodeViewer
-                files={files}
-                stage={stage}
-                selectedFile={selectedFile}
-                onFileSelect={handleFileSelect}
-                currentFile={currentFile}
-                onFileUpdate={onFileUpdate}
-                openTabs={openTabs}
-                onTabClose={handleTabClose}
-                onCloseAllTabs={handleCloseAllTabs}
-              />
-            </div>
-          </div>
+          <EditorPanel
+            files={files}
+            stage={stage}
+            currentFile={currentFile}
+            onFileUpdate={onFileUpdate}
+            onFileReset={handleFileReset}
+          />
         )}
         {activeTab === "preview" && (
           <PreviewPanel
