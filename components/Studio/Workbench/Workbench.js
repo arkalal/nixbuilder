@@ -197,8 +197,10 @@ function getIconColorClass(status) {
     case "pending":
       return styles.statusPending;
     case "in_progress":
+    case "running":
       return styles.statusRunning;
     case "completed":
+    case "complete":
       return styles.statusComplete;
     case "aborted":
       return styles.statusAborted;

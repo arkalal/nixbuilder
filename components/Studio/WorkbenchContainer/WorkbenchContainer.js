@@ -18,12 +18,13 @@ export default function WorkbenchContainer({ title, onFileClick }) {
   const currentStreamingFile = useStore($currentStreamingFile);
 
   // Convert actions map to array sorted by creation time
+  // Keep status as-is - Workbench handles "running", "pending", "complete"
   const actions = Object.values(actionsMap)
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((action) => ({
       id: action.id,
       file: action.path,
-      status: action.status === "running" ? "in_progress" : action.status,
+      status: action.status,
       isEdit: action.isEdit,
     }));
 

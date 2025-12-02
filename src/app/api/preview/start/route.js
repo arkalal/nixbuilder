@@ -27,6 +27,48 @@ function hasNextAuthConfigured(files) {
   );
 }
 
+// Auto-fix @/ imports to relative imports based on file location
+function fixPathAliasImports(files) {
+  const out = { ...files };
+
+  for (const [filePath, content] of Object.entries(out)) {
+    if (!filePath.endsWith(".js") && !filePath.endsWith(".jsx")) continue;
+    if (typeof content !== "string") continue;
+
+    // Count depth from root (e.g., app/page.jsx = 1, app/auth/login/page.jsx = 3)
+    const depth = filePath.split("/").length - 1;
+    const prefix = "../".repeat(depth) || "./";
+
+    // Replace @/components/* with relative path
+    let fixed = content.replace(
+      /from\s+['"]@\/components\/([^'"]+)['"]/g,
+      `from '${prefix}components/$1'`
+    );
+    // Replace @/lib/* with relative path
+    fixed = fixed.replace(
+      /from\s+['"]@\/lib\/([^'"]+)['"]/g,
+      `from '${prefix}lib/$1'`
+    );
+    // Replace @/utils/* with relative path
+    fixed = fixed.replace(
+      /from\s+['"]@\/utils\/([^'"]+)['"]/g,
+      `from '${prefix}utils/$1'`
+    );
+    // Replace @/models/* with relative path
+    fixed = fixed.replace(
+      /from\s+['"]@\/models\/([^'"]+)['"]/g,
+      `from '${prefix}models/$1'`
+    );
+
+    if (fixed !== content) {
+      console.log(`[Preview] Fixed @/ imports in ${filePath}`);
+      out[filePath] = fixed;
+    }
+  }
+
+  return out;
+}
+
 // Remove invalid deps accidentally inferred from local aliases or bad names
 function sanitizeInvalidDeps(files) {
   const out = { ...files };
@@ -56,9 +98,20 @@ function sanitizeInvalidDeps(files) {
 // Auto-add missing dependencies based on import/require usage in JS files
 function ensureDependenciesFromImports(files) {
   const out = { ...files };
-  const pkg = out["package.json"]
-    ? JSON.parse(out["package.json"])
-    : { dependencies: {}, devDependencies: {} };
+  let pkg = { dependencies: {}, devDependencies: {} };
+
+  if (out["package.json"]) {
+    try {
+      pkg = JSON.parse(out["package.json"]);
+    } catch (err) {
+      console.warn(
+        "[Preview] package.json has invalid JSON in ensureDependenciesFromImports:",
+        err.message
+      );
+      pkg = { dependencies: {}, devDependencies: {} };
+    }
+  }
+
   pkg.dependencies = pkg.dependencies || {};
   pkg.devDependencies = pkg.devDependencies || {};
 
@@ -164,15 +217,35 @@ function ensureDependenciesFromImports(files) {
 // Ensure jsconfig.json has path aliases for common patterns used by generated code
 function ensureJSConfigPaths(files) {
   const out = { ...files };
-  const js = out["jsconfig.json"]
-    ? JSON.parse(out["jsconfig.json"])
-    : { compilerOptions: { baseUrl: ".", paths: {} } };
+  let js = { compilerOptions: { baseUrl: ".", paths: {} } };
+
+  if (out["jsconfig.json"]) {
+    try {
+      // Try to parse existing jsconfig.json
+      js = JSON.parse(out["jsconfig.json"]);
+    } catch (err) {
+      // If JSON is malformed, log warning and use default
+      console.warn(
+        "[Preview] jsconfig.json has invalid JSON, using default:",
+        err.message
+      );
+      js = { compilerOptions: { baseUrl: ".", paths: {} } };
+    }
+  }
+
   js.compilerOptions = js.compilerOptions || { baseUrl: ".", paths: {} };
   js.compilerOptions.baseUrl = js.compilerOptions.baseUrl || ".";
   js.compilerOptions.paths = js.compilerOptions.paths || {};
 
   const hasDir = (d) => Object.keys(out).some((p) => p.startsWith(`${d}/`));
 
+  // ALWAYS add @/* mapping to root - this is the most common pattern
+  // This allows imports like @/components/Calculator to resolve to components/Calculator
+  if (!js.compilerOptions.paths["@/*"]) {
+    js.compilerOptions.paths["@/*"] = ["./*"];
+  }
+
+  // Also add specific mappings for common directories
   if (hasDir("components") && !js.compilerOptions.paths["@components/*"]) {
     js.compilerOptions.paths["@components/*"] = ["components/*"];
   }
@@ -181,9 +254,6 @@ function ensureJSConfigPaths(files) {
   }
   if (hasDir("utils") && !js.compilerOptions.paths["@utils/*"]) {
     js.compilerOptions.paths["@utils/*"] = ["utils/*"];
-  }
-  if (hasDir("src") && !js.compilerOptions.paths["@/*"]) {
-    js.compilerOptions.paths["@/*"] = ["src/*"];
   }
 
   out["jsconfig.json"] = JSON.stringify(js, null, 2);
@@ -230,17 +300,67 @@ function injectPreviewHeaders(files) {
   // Inject headers() into next.config.mjs if missing
   if (out["next.config.mjs"]) {
     let cfg = out["next.config.mjs"];
-    const hasHeaders = /headers\s*\(/.test(cfg) || /headers:\s*\(/.test(cfg);
     const hasFrameAncestors = /frame-ancestors/i.test(cfg);
+
     if (!hasFrameAncestors) {
-      if (/export\s+default\s*\{/.test(cfg)) {
+      // Check if the config is malformed/incomplete
+      const hasNextConfig = /const\s+nextConfig/.test(cfg);
+      const hasProperExport = /export\s+default\s+(nextConfig|\{)/.test(cfg);
+      const isIncomplete = hasNextConfig && !hasProperExport;
+
+      if (isIncomplete) {
+        // Config is incomplete/malformed - replace with proper config
+        console.log("[Preview] Replacing incomplete next.config.mjs");
+        cfg = `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "${cspValue}" },
+          { key: "X-Frame-Options", value: "ALLOWALL" }
+        ]
+      }
+    ];
+  },
+};
+
+export default nextConfig;
+`;
+      } else if (/export\s+default\s*\{/.test(cfg)) {
+        // Inline export - inject headers
         cfg = cfg.replace(
           /export\s+default\s*\{/,
           (m) =>
-            `${m}\n  async headers() {\n    return [\n      {\n        source: '/:path*',\n        headers: [\n          { key: 'Content-Security-Policy', value: '${cspValue}' },\n          { key: 'X-Frame-Options', value: 'ALLOWALL' }\n        ]\n      }\n    ];\n  },`
+            `${m}\n  async headers() {\n    return [\n      {\n        source: "/:path*",\n        headers: [\n          { key: "Content-Security-Policy", value: "${cspValue}" },\n          { key: "X-Frame-Options", value: "ALLOWALL" }\n        ]\n      }\n    ];\n  },`
         );
-      } else if (!/export\s+default/.test(cfg)) {
-        cfg += `\n\n/** @type {import('next').NextConfig} */\nconst nextConfig = {\n  async headers() {\n    return [\n      {\n        source: '/:path*',\n        headers: [\n          { key: 'Content-Security-Policy', value: '${cspValue}' },\n          { key: 'X-Frame-Options', value: 'ALLOWALL' }\n        ]\n      }\n    ];\n  },\n};\n\nexport default nextConfig;\n`;
+      } else if (/export\s+default\s+nextConfig/.test(cfg)) {
+        // Named export - inject headers into the config object
+        cfg = cfg.replace(
+          /(const\s+nextConfig\s*=\s*\{)/,
+          `$1\n  async headers() {\n    return [\n      {\n        source: "/:path*",\n        headers: [\n          { key: "Content-Security-Policy", value: "${cspValue}" },\n          { key: "X-Frame-Options", value: "ALLOWALL" }\n        ]\n      }\n    ];\n  },`
+        );
+      } else {
+        // No config at all - create one
+        cfg = `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "${cspValue}" },
+          { key: "X-Frame-Options", value: "ALLOWALL" }
+        ]
+      }
+    ];
+  },
+};
+
+export default nextConfig;
+`;
       }
       out["next.config.mjs"] = cfg;
     }
@@ -576,6 +696,8 @@ export async function POST(request) {
     filesWithHeaders = sanitizeInvalidDeps(filesWithHeaders);
     // Ensure client-only imports are marked with 'use client' so interactivity works
     filesWithHeaders = ensureClientComponentsForImports(filesWithHeaders);
+    // Auto-fix @/ path alias imports to relative imports (more reliable)
+    filesWithHeaders = fixPathAliasImports(filesWithHeaders);
     // Add jsconfig path aliases if needed so local aliases resolve during preview
     filesWithHeaders = ensureJSConfigPaths(filesWithHeaders);
     // Ensure NextAuth config has preview-compatible settings (trustHost, useSecureCookies)

@@ -1,7 +1,11 @@
 /**
  * Workbench Store - Chef-style persistent state using nanostores
  * Based on: https://github.com/get-convex/chef/blob/main/app/lib/stores/workbench.client.ts
- * Actions persist across renders and stage changes
+ *
+ * Chef's Action Status Flow:
+ * - onActionOpen: Creates action with "pending" status
+ * - onActionStream: Updates content, sets status to "running"
+ * - onActionClose: Marks action as "complete"
  */
 
 import { atom, map, computed } from "nanostores";
@@ -25,29 +29,22 @@ export const $followingStreamedCode = editorStore.followingStreamedCode;
 // Actions are NEVER cleared during a session, only on new generation
 export const $actions = map({});
 
-// Current streaming file
+// Current streaming file path (for tracking which file is streaming)
 export const $currentStreamingFile = atom(null);
 
-// Files store - Chef style FileMap
-export const $files = map({});
+// Track which action IDs have been created (to prevent duplicates)
+const createdActionIds = new Set();
 
 // Action counter for unique IDs
 let actionCounter = 0;
 
 /**
- * Add a new action (file being created/edited)
- * @param {Object} params - Action parameters
- * @param {string} params.path - File path
- * @param {string} params.content - File content
- * @param {boolean} params.isEdit - Whether this is an edit (vs create)
- * @param {string} params.status - Action status
+ * CHEF PATTERN: onActionOpen - Called when a file action TAG OPENS
+ * Creates action with "pending" status
+ * @param {string} path - File path
+ * @param {boolean} isEdit - Whether this is an edit
  */
-export function addAction({
-  path,
-  content,
-  isEdit = false,
-  status = "pending",
-}) {
+export function onActionOpen(path, isEdit = false) {
   const actions = $actions.get();
 
   // Check if action for this path already exists
@@ -56,35 +53,136 @@ export function addAction({
   );
 
   if (existingKey) {
-    const existingAction = actions[existingKey];
-    // IMPORTANT: Don't downgrade "complete" status to "running"
-    // This prevents timing issues where streaming updates overwrite completion
-    const newStatus =
-      existingAction.status === "complete" && status === "running"
-        ? "complete"
-        : status;
+    // Action already exists, don't recreate
+    return existingKey;
+  }
 
-    // Update existing action
+  // Create new action with pending status
+  const actionId = `action-${++actionCounter}-${Date.now()}`;
+  createdActionIds.add(path);
+
+  $actions.setKey(actionId, {
+    id: actionId,
+    path,
+    content: "",
+    isEdit,
+    status: "pending",
+    createdAt: Date.now(),
+  });
+
+  return actionId;
+}
+
+/**
+ * CHEF PATTERN: onActionStream - Called while file content is streaming
+ * Updates content and sets status to "running"
+ * @param {string} path - File path
+ * @param {string} content - Current content
+ * @param {boolean} isEdit - Whether this is an edit
+ */
+export function onActionStream(path, content, isEdit = false) {
+  const actions = $actions.get();
+
+  // Find existing action
+  const existingKey = Object.keys(actions).find(
+    (key) => actions[key].path === path
+  );
+
+  if (existingKey) {
+    const existingAction = actions[existingKey];
+
+    // Don't downgrade from "complete" to "running"
+    if (existingAction.status === "complete") {
+      return existingKey;
+    }
+
+    // Update action with streaming content
     $actions.setKey(existingKey, {
       ...existingAction,
       content,
-      status: newStatus,
+      status: "running",
     });
     return existingKey;
   }
 
-  // Create new action
+  // If action doesn't exist, create it (handles case where onActionOpen wasn't called)
+
   const actionId = `action-${++actionCounter}-${Date.now()}`;
+  createdActionIds.add(path);
+
   $actions.setKey(actionId, {
     id: actionId,
     path,
     content,
     isEdit,
-    status,
+    status: "running",
     createdAt: Date.now(),
   });
 
   return actionId;
+}
+
+/**
+ * CHEF PATTERN: onActionClose - Called when file action TAG CLOSES
+ * Marks action as "complete"
+ * @param {string} path - File path
+ * @param {string} content - Final content
+ * @param {boolean} isEdit - Whether this is an edit
+ */
+export function onActionClose(path, content, isEdit = false) {
+  const actions = $actions.get();
+
+  // Find existing action
+  const existingKey = Object.keys(actions).find(
+    (key) => actions[key].path === path
+  );
+
+  if (existingKey) {
+    // Update existing action to complete
+    $actions.setKey(existingKey, {
+      ...actions[existingKey],
+      content,
+      status: "complete",
+    });
+    return existingKey;
+  }
+
+  // If action doesn't exist, create it as complete
+  const actionId = `action-${++actionCounter}-${Date.now()}`;
+  createdActionIds.add(path);
+
+  $actions.setKey(actionId, {
+    id: actionId,
+    path,
+    content,
+    isEdit,
+    status: "complete",
+    createdAt: Date.now(),
+  });
+
+  return actionId;
+}
+
+/**
+ * Legacy addAction function for backward compatibility
+ * Routes to appropriate Chef-style function based on status
+ */
+export function addAction({
+  path,
+  content,
+  isEdit = false,
+  status = "pending",
+}) {
+  if (status === "pending") {
+    return onActionOpen(path, isEdit);
+  } else if (status === "running") {
+    return onActionStream(path, content, isEdit);
+  } else if (status === "complete") {
+    return onActionClose(path, content, isEdit);
+  }
+
+  // Fallback for other statuses
+  return onActionStream(path, content, isEdit);
 }
 
 /**
@@ -108,21 +206,11 @@ export function updateAction(actionId, updates) {
 }
 
 /**
- * Mark an action as complete
+ * Mark an action as complete by path
  * @param {string} path - File path to mark complete
  */
 export function completeAction(path) {
-  const actions = $actions.get();
-  const existingKey = Object.keys(actions).find(
-    (key) => actions[key].path === path
-  );
-
-  if (existingKey) {
-    $actions.setKey(existingKey, {
-      ...actions[existingKey],
-      status: "complete",
-    });
-  }
+  onActionClose(path, "", false);
 }
 
 /**
@@ -132,15 +220,8 @@ export function completeAction(path) {
 export function setCurrentStreamingFile(file) {
   $currentStreamingFile.set(file);
 
-  if (file) {
-    // Add/update action for streaming file
-    addAction({
-      path: file.path,
-      content: file.content,
-      isEdit: file.isEdit || false,
-      status: "running",
-    });
-  }
+  // Note: onActionStream is now called directly from page.js
+  // This function just tracks the current streaming file
 }
 
 /**
@@ -165,6 +246,7 @@ export function clearActions() {
   $actions.set({});
   $currentStreamingFile.set(null);
   actionCounter = 0;
+  createdActionIds.clear();
 }
 
 /**

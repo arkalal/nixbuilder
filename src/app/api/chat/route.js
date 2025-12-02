@@ -1,314 +1,163 @@
-import { generateCode } from "../../../../lib/services/writer";
-import { createSSEStream, createSSEResponse } from "../../../../lib/sse";
+/**
+ * Chat API Route - EXACT Chef Architecture
+ * createDataStream() → streamText() → mergeIntoDataStream() → toDataStreamResponse()
+ */
+
+import { createDataStream, streamText } from "ai";
+import { z } from "zod";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../auth";
 import { globalVFS } from "../../../../lib/vfs";
+import {
+  getOpenRouterProvider,
+  getDefaultModel,
+} from "../../../../lib/openrouter";
+import { CHEF_SYSTEM_PROMPT } from "../../../../lib/prompts/system.chef";
+
+// Allow streaming responses up to 120 seconds
+export const maxDuration = 120;
 
 export async function POST(request) {
   try {
-    console.log("[API] Chat request received");
+    console.log("[API] Chat request received (Chef architecture)");
 
     // Check authentication
     const session = await getServerSession(authOptions);
-    console.log(
-      "[API] Session check:",
-      session ? "✓ Authenticated" : "✗ Not authenticated"
-    );
-
     if (!session) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
-    const { message, model, temperature, history } = body;
-    console.log("[API] Request:", {
-      message: message.substring(0, 50) + "...",
-      model,
-      temperature,
-    });
+    const { messages: clientMessages, model: requestedModel } = body;
 
-    if (!message || typeof message !== "string") {
-      return Response.json({ error: "Message is required" }, { status: 400 });
+    if (!clientMessages || !Array.isArray(clientMessages)) {
+      return Response.json(
+        { error: "Messages array required" },
+        { status: 400 }
+      );
     }
 
-    // Create SSE stream
-    const { stream, send, close } = createSSEStream();
-    console.log("[API] SSE stream created");
+    const model = requestedModel || getDefaultModel();
+    console.log("[API] Using model:", model);
 
-    // Helper: transient network error detection for retriable streaming failures
-    const shouldRetry = (err) => {
-      const msg = String(err?.message || "");
-      const code = err?.cause?.code || err?.code || "";
-      return (
-        /terminated|other side closed|Connection closed|stream aborted/i.test(
-          msg
-        ) || /UND_ERR_SOCKET|ECONNRESET|ETIMEDOUT/i.test(code)
-      );
+    // Get provider
+    const provider = getOpenRouterProvider();
+
+    // Build project context
+    const existingFiles = globalVFS.getAllFiles();
+    const filePaths = Object.keys(existingFiles);
+    const isNewProject = filePaths.length === 0;
+
+    // Clear VFS for new projects
+    if (isNewProject && globalVFS.clear) {
+      globalVFS.clear();
+    }
+
+    // Build context string for AI
+    const keyFiles = ["app/page.jsx", "app/layout.jsx", "package.json"];
+    const keyContents = keyFiles
+      .filter((p) => existingFiles[p])
+      .map((p) => `--- ${p} ---\n${existingFiles[p]}`)
+      .join("\n\n");
+
+    const contextStr =
+      filePaths.length > 0
+        ? `\n\n[CURRENT PROJECT FILES]\nFiles: ${filePaths.join(
+            ", "
+          )}\n\n${keyContents}`
+        : "";
+
+    const modePreface = isNewProject
+      ? "MODE: NEW PROJECT - Create all necessary files from scratch.\n\n"
+      : "MODE: EDIT EXISTING - Only modify files that need changes.\n\n";
+
+    // Prepare messages - add context to the last user message
+    const messagesForAI = clientMessages.map((msg, idx) => {
+      if (msg.role === "user" && idx === clientMessages.length - 1) {
+        return {
+          role: msg.role,
+          content: `${modePreface}${contextStr}\n\n${msg.content}`,
+        };
+      }
+      return { role: msg.role, content: msg.content };
+    });
+
+    // Define tools (Chef pattern - NO execute, client-side execution via onToolCall)
+    const tools = {
+      viewFile: {
+        description:
+          "Read the contents of a file to see its current state before editing",
+        parameters: z.object({
+          filePath: z.string().describe("The path to the file to read"),
+        }),
+        // No execute - handled client-side via onToolCall
+      },
+      editFile: {
+        description:
+          "Make small, targeted edits to an existing file. Use for changes under 20 lines.",
+        parameters: z.object({
+          filePath: z.string().describe("Path to the file to edit"),
+          oldText: z
+            .string()
+            .describe("Exact text to find and replace (must be unique)"),
+          newText: z.string().describe("New text to replace with"),
+        }),
+        // No execute - handled client-side via onToolCall
+      },
+      deploy: {
+        description:
+          "Deploy the application to preview. Use after all files are ready.",
+        parameters: z.object({
+          message: z
+            .string()
+            .optional()
+            .describe("Optional deployment message"),
+        }),
+        // No execute - handled client-side via onToolCall
+      },
     };
 
-    // Process in the background
-    (async () => {
-      try {
-        console.log("[API] Starting generation...");
-
-        // Send stage update
-        send("stage", { stage: "generating" });
-        send("activity", {
-          message: "Starting code generation...",
-          status: "in_progress",
-        });
-
-        // Retry loop for transient stream disconnects
-        const MAX_ATTEMPTS = 2;
-        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-          try {
-            // Build project context for iterative edits (re-evaluate each attempt to reflect any prior files)
-            const existingFiles = globalVFS.getAllFiles();
-            const filePaths = Object.keys(existingFiles);
-            const keyFiles = [
-              "app/page.jsx",
-              "app/layout.jsx",
-              "app/globals.scss",
-              "package.json",
-              "next.config.mjs",
-              "jsconfig.json",
-            ];
-            const keyContents = keyFiles
-              .filter((p) => existingFiles[p])
-              .map((p) => `--- ${p} ---\n${existingFiles[p]}`)
-              .join("\n\n");
-            const historyText = Array.isArray(history)
-              ? `\n\nCONVERSATION HISTORY (latest first)\n----------------------------------\n${[
-                  ...history,
-                ]
-                  .slice(-6)
-                  .reverse()
-                  .map((h) => `${h.role.toUpperCase()}: ${h.content || ""}`)
-                  .join("\n")}`
-              : "";
-            const context = `Existing files (${filePaths.length}):\n${filePaths
-              .map((p) => `- ${p}`)
-              .join("\n")}\n\n${keyContents}${historyText}`;
-
-            // Generate code with streaming
-            console.log("[API] Calling generateCode...");
-            const isNewProject = filePaths.length === 0;
-            // Force stricter focus for iterative edits to avoid redoing previous features
-            // Also explicitly protect .env and other config files
-            const hasEnvFile = filePaths.includes(".env");
-            const latestTaskPreface = isNewProject
-              ? message
-              : `ONLY perform the following latest task. Do NOT re-implement previous features.
-${
-  hasEnvFile
-    ? "⚠️ CRITICAL: .env file exists - DO NOT output or regenerate it. User has their credentials there."
-    : ""
-}
-Output ONLY the files that need to be changed for this request.
-Instruction: ${message}`;
-
-            const effectiveTemp = isNewProject
-              ? typeof temperature === "number"
-                ? temperature
-                : 0.7
-              : Math.min(
-                  typeof temperature === "number" ? temperature : 0.4,
-                  0.4
-                );
-
-            const result = await generateCode(latestTaskPreface, {
-              model,
-              temperature: effectiveTemp,
-              vfs: globalVFS,
-              context,
-              newProject: isNewProject,
-            });
-            console.log("[API] generateCode returned");
-
-            // Track accumulated text and file boundaries
-            let generatedCode = "";
-            let currentFilePath = "";
-            let isInFile = false;
-            let isInTag = false;
-            let conversationalBuffer = "";
-            let explanationSent = false;
-            let inExplanation = false;
-            let explanationBuffer = "";
-            let fileTagBuffer = ""; // small rolling buffer
-
-            console.log("[API] Starting to stream text...");
-            for await (const textPart of result.textStream) {
-              const text = textPart || "";
-              // Accumulate ALL text
-              generatedCode += text;
-
-              // Handle explanation tag streaming-first
-              if (!explanationSent) {
-                const combined = explanationBuffer + text;
-                if (!inExplanation && combined.includes("<explanation>")) {
-                  inExplanation = true;
-                }
-                if (inExplanation) {
-                  explanationBuffer = combined;
-                  if (combined.includes("</explanation>")) {
-                    const m = combined.match(
-                      /<explanation>([\s\S]*?)<\/explanation>/
-                    );
-                    const explanationText = m ? m[1].trim() : "";
-                    console.log(
-                      `[API] 🎯 IMMEDIATE explanation: "${explanationText.substring(
-                        0,
-                        100
-                      )}..."`
-                    );
-                    send("explanation", { text: explanationText });
-                    explanationSent = true;
-                    inExplanation = false;
-                  } else {
-                    // wait for closing tag in subsequent chunks
-                    continue;
-                  }
-                }
-              }
-
-              // Stream raw text for code display
-              send("rawStream", { text, raw: true });
-
-              // Tag boundary detection
-              const hasOpenTag =
-                /<(file|package|packages|explanation|command|structure|template)\b/.test(
-                  text
-                );
-              const hasCloseTag =
-                /<\/(file|package|packages|explanation|command|structure|template)>/.test(
-                  text
-                );
-
-              if (hasOpenTag) {
-                if (conversationalBuffer.trim() && !isInTag) {
-                  console.log(
-                    `[API] Sending conversational text: "${conversationalBuffer
-                      .trim()
-                      .substring(0, 50)}..."`
-                  );
-                  send("stream", { content: conversationalBuffer.trim() });
-                  conversationalBuffer = "";
-                }
-                isInTag = true;
-              }
-
-              if (hasCloseTag) {
-                isInTag = false;
-                conversationalBuffer = "";
-              }
-
-              if (!isInTag && !hasOpenTag && !hasCloseTag) {
-                conversationalBuffer += text;
-              }
-
-              // Detect file starts
-              const searchText = fileTagBuffer + text;
-              const openRegex = /<file path="([^"]+)">/g;
-              let openMatch;
-              while ((openMatch = openRegex.exec(searchText)) !== null) {
-                currentFilePath = openMatch[1];
-                isInFile = true;
-                console.log(`[API] 📄 File STARTED: ${currentFilePath}`);
-                send("activity", {
-                  message: `Generating ${currentFilePath}`,
-                  status: "in_progress",
-                  file: currentFilePath,
-                });
-              }
-              fileTagBuffer = searchText.slice(-100);
-
-              // Detect file end
-              if (isInFile && text.includes("</file>") && currentFilePath) {
-                console.log(`[API] ✅ File COMPLETED: ${currentFilePath}`);
-                send("activity", {
-                  message: `Created ${currentFilePath}`,
-                  status: "completed",
-                  file: currentFilePath,
-                });
-                isInFile = false;
-                currentFilePath = "";
-              }
-            }
-            // Stream ended successfully on this attempt
-            console.log(`[API] ✅ Stream finished! Parsing files for VFS...`);
-
-            const finalConversation = conversationalBuffer.trim();
-            if (finalConversation) {
-              console.log(
-                `[API] Final conversational text saved for complete event: "${finalConversation.substring(
-                  0,
-                  100
-                )}..."`
-              );
-            }
-
-            const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-            let fileMatch;
-            const parsedFiles = {};
-            while ((fileMatch = fileRegex.exec(generatedCode)) !== null) {
-              const filePath = fileMatch[1];
-              const fileContent = fileMatch[2].trim();
-              parsedFiles[filePath] = fileContent;
-              globalVFS.writeFile(filePath, fileContent);
-            }
-
+    // CHEF ARCHITECTURE: createDataStream with execute callback
+    const dataStream = createDataStream({
+      execute(dataStream) {
+        // streamText inside createDataStream (Chef pattern)
+        const result = streamText({
+          model: provider(model),
+          system: CHEF_SYSTEM_PROMPT,
+          messages: messagesForAI,
+          tools,
+          toolChoice: "auto",
+          maxTokens: 32000,
+          onFinish: ({ usage, finishReason }) => {
             console.log(
-              `[API] ✅ Parsed ${Object.keys(parsedFiles).length} files to VFS`
+              `[API] Finished: ${finishReason}, usage: ${JSON.stringify(usage)}`
             );
-            send("activity", {
-              message: "Code generation complete",
-              status: "completed",
-            });
-
-            const allFiles = globalVFS.getAllFiles();
-            const fileCount = Object.keys(allFiles).length;
-            console.log(`[API] Sending ${fileCount} files in complete event`);
-            send("complete", {
-              files: allFiles,
-              finalMessage: finalConversation || undefined,
-            });
-            send("stage", { stage: "done" });
-            break; // success; exit retry loop
-          } catch (err) {
-            if (attempt < MAX_ATTEMPTS && shouldRetry(err)) {
-              console.warn(
-                `[API] Stream interrupted (attempt ${attempt}). Retrying...`,
-                err?.message
-              );
-              send("activity", {
-                message: `Connection dropped, retrying (${attempt}/${
-                  MAX_ATTEMPTS - 1
-                })...`,
-                status: "in_progress",
-              });
-              continue;
-            }
-            throw err;
-          }
-        }
-      } catch (error) {
-        console.error("Chat API error:", error);
-        const friendly = shouldRetry(error)
-          ? "Generation stream was interrupted and could not be recovered. Please try again."
-          : error.message || "Code generation failed";
-        send("error", {
-          code: "GENERATION_FAILED",
-          message: friendly,
+          },
+          onError({ error }) {
+            console.error("[API] Stream error:", error);
+          },
         });
-        send("stage", { stage: "idle" });
-      } finally {
-        close();
-      }
-    })();
 
-    return createSSEResponse(stream);
+        // CHEF PATTERN: merge result into data stream
+        result.mergeIntoDataStream(dataStream);
+      },
+      onError(error) {
+        console.error("[API] Stream error:", error);
+        return error.message || "Stream error";
+      },
+    });
+
+    // CHEF PATTERN: return as Response with headers (exact Chef pattern)
+    return new Response(dataStream, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        Connection: "keep-alive",
+        "Cache-Control": "no-cache",
+      },
+    });
   } catch (error) {
-    console.error("Chat route error:", error);
+    console.error("[API] Route error:", error);
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,1074 +1,407 @@
 "use client";
 
+/**
+ * Studio Page - EXACT Chef Architecture
+ * Frontend: useChat() from @ai-sdk/react
+ * Backend: createDataStream() → streamText() → mergeIntoDataStream() → toDataStreamResponse()
+ */
+
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useChat } from "@ai-sdk/react";
 import StudioLayout from "../../../../components/Studio/StudioLayout/StudioLayout";
 import Composer from "../../../../components/Studio/Composer/Composer";
 import RightPanel from "../../../../components/Studio/RightPanel/RightPanel";
+import { globalVFS } from "../../../../lib/vfs";
 import styles from "./Studio.module.scss";
-import {
-  addAction,
-  completeAction,
-  setCurrentStreamingFile,
-  clearActions,
-  markAllActionsComplete,
-  syncFilesWithEditor,
-  setStreamingDocument,
-  clearEditorState,
-} from "../../../../stores/workbench";
+
+// Tag constants for parsing (Chef pattern)
+const ARTIFACT_TAG_OPEN = "<boltArtifact";
+const ARTIFACT_TAG_CLOSE = "</boltArtifact>";
+const ACTION_TAG_OPEN = "<boltAction";
+const ACTION_TAG_CLOSE = "</boltAction>";
+
+// Clean markdown from content
+function cleanMarkdownSyntax(content) {
+  let cleaned = content;
+  const fullBlockRegex = /^\s*```[\w]*\n?([\s\S]*?)\n?```\s*$/;
+  const fullMatch = cleaned.match(fullBlockRegex);
+  if (fullMatch) return fullMatch[1];
+  cleaned = cleaned.replace(/```[\w]*\n([\s\S]*?)\n```/g, "$1");
+  if (cleaned.startsWith("```")) cleaned = cleaned.replace(/^```[\w]*\n?/, "");
+  if (cleaned.endsWith("```")) cleaned = cleaned.replace(/\n?```$/, "");
+  return cleaned;
+}
+
+// Clean escaped HTML entities
+function cleanEscapedTags(content) {
+  return content
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+// Strip artifacts from text for display
+function stripArtifacts(content) {
+  if (!content) return "";
+  let result = "";
+  let i = 0;
+  while (i < content.length) {
+    const startIdx = content.indexOf(ARTIFACT_TAG_OPEN, i);
+    if (startIdx === -1) {
+      result += content.slice(i);
+      break;
+    }
+    result += content.slice(i, startIdx);
+    const endIdx = content.indexOf(ARTIFACT_TAG_CLOSE, startIdx);
+    if (endIdx === -1) break;
+    i = endIdx + ARTIFACT_TAG_CLOSE.length;
+  }
+  return result.trim();
+}
+
+// Extract files from content
+function extractFilesFromContent(content) {
+  if (!content) return [];
+  const files = [];
+  const fileRegex =
+    /<boltAction\s+[^>]*type="file"[^>]*>([\s\S]*?)<\/boltAction>/g;
+  let match;
+
+  while ((match = fileRegex.exec(content)) !== null) {
+    const tag = match[0];
+    const filePathMatch = tag.match(/filePath="([^"]+)"/);
+    if (!filePathMatch) continue;
+
+    let filePath = filePathMatch[1];
+    if (filePath.startsWith("/")) filePath = filePath.slice(1);
+
+    let fileContent = match[1];
+
+    // Clean content
+    if (!filePath.endsWith(".md")) {
+      fileContent = cleanMarkdownSyntax(fileContent);
+      fileContent = cleanEscapedTags(fileContent);
+    }
+
+    fileContent = fileContent.trim() + "\n";
+
+    files.push({ path: filePath, content: fileContent });
+  }
+
+  return files;
+}
+
+// Get file type from extension
+function getFileType(path) {
+  const ext = path.split(".").pop()?.toLowerCase();
+  if (ext === "jsx" || ext === "js") return "javascript";
+  if (ext === "css" || ext === "scss") return "css";
+  if (ext === "json") return "json";
+  return "text";
+}
 
 export default function StudioPage() {
-  const [messages, setMessages] = useState([]);
-  const [stage, setStage] = useState("idle"); // idle | planning | generating | previewing | done
-  const [files, setFiles] = useState([]);
-  const [logs, setLogs] = useState([]);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [activeTab, setActiveTab] = useState("code"); // code | preview | logs
-  const [selectedFileFromWorkbench, setSelectedFileFromWorkbench] =
-    useState(null);
+  // UI State
   const [selectedModel, setSelectedModel] = useState(
     "anthropic/claude-3.5-sonnet"
   );
+  const [activeTab, setActiveTab] = useState("code");
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [localFiles, setLocalFiles] = useState([]);
+  const [completedFiles, setCompletedFiles] = useState([]);
 
-  // Sandbox state (E2B)
-  const [sandboxId, setSandboxId] = useState(null);
-  const [projectId] = useState(`project-${Date.now()}`); // Temporary until projects CRUD is implemented
-  const logsReaderRef = useRef(null);
-  const sandboxBusyRef = useRef(false); // prevents re-entrant sandbox runs
+  // Refs
+  const processedFilesRef = useRef(new Set());
 
-  // Open-lovable style streaming state
-  const [streamingCode, setStreamingCode] = useState("");
-  const [currentFile, setCurrentFile] = useState(null); // { path, content, type }
-  const [completedFiles, setCompletedFiles] = useState([]); // Persisted completed files for this generation
-  // Queue to briefly display fast-completing files so each file is visibly streamed
-  const displayQueueRef = useRef([]);
-  const isDisplayingRef = useRef(false);
-  // Explanation gating to ensure explanation renders BEFORE any code/activity
-  const explanationReceivedRef = useRef(false);
-  const preExplanationRawBufferRef = useRef("");
-  const queuedActivitiesRef = useRef([]);
-  const fallbackExplanationTimerRef = useRef(null);
-  // Keep latest files in a ref to avoid adding 'files' to effect deps
-  const filesRef = useRef([]);
-  useEffect(() => {
-    filesRef.current = files;
-    // Sync files with editor store (Chef pattern)
-    if (files.length > 0) {
-      syncFilesWithEditor(files);
-    }
-  }, [files]);
+  // Tool execution handler (Chef pattern - client-side tool execution)
+  const executeToolCall = useCallback(async (toolName, args) => {
+    console.log(`[Studio] Executing tool: ${toolName}`, args);
 
-  // Keep latest completedFiles in a ref for event handlers to access latest value
-  const completedFilesRef = useRef([]);
-  useEffect(() => {
-    completedFilesRef.current = completedFiles;
-  }, [completedFiles]);
-
-  // Track user-edited files to protect them from AI overwrites
-  const userEditedFilesRef = useRef(new Set());
-  // Track existing files before generation to determine Edit vs Create
-  const [existingFilesSnapshot, setExistingFilesSnapshot] = useState([]);
-  // Deduplicate last queued completed file for brief display
-  const lastQueuedPathRef = useRef(null);
-  // Track which files have been added to nanostores actions (prevents batch creation)
-  const processedActionsRef = useRef(new Set());
-  // Monotonic ID generator to avoid duplicate React keys when events happen within the same millisecond
-  const idCounterRef = useRef(0);
-  const generateId = () => {
-    idCounterRef.current += 1;
-    return `${Date.now()}-${idCounterRef.current}`;
-  };
-
-  const processDisplayQueue = useCallback(() => {
-    if (isDisplayingRef.current) return;
-    if (!displayQueueRef.current || displayQueueRef.current.length === 0)
-      return;
-    isDisplayingRef.current = true;
-    const next = displayQueueRef.current.shift();
-    if (next) {
-      setCurrentFile({
-        path: next.path,
-        content: next.content,
-        type: next.type,
-      });
-      setTimeout(() => {
-        isDisplayingRef.current = false;
-        processDisplayQueue();
-      }, 450);
-    } else {
-      isDisplayingRef.current = false;
+    switch (toolName) {
+      case "viewFile": {
+        const path = args.filePath?.startsWith("/")
+          ? args.filePath.slice(1)
+          : args.filePath;
+        const content = globalVFS.readFile(path);
+        if (content === null) return `Error: File not found: ${path}`;
+        return content;
+      }
+      case "editFile": {
+        const path = args.filePath?.startsWith("/")
+          ? args.filePath.slice(1)
+          : args.filePath;
+        const content = globalVFS.readFile(path);
+        if (!content) return `Error: File not found: ${path}`;
+        if (!content.includes(args.oldText))
+          return `Error: Text to replace not found in file`;
+        const newContent = content.replace(args.oldText, args.newText);
+        globalVFS.writeFile(path, newContent);
+        // Update local state
+        setLocalFiles((prev) =>
+          prev.map((f) => (f.path === path ? { ...f, content: newContent } : f))
+        );
+        return `Successfully edited ${path}`;
+      }
+      case "deploy": {
+        console.log(
+          `[Studio] Deploy requested: ${args.message || "No message"}`
+        );
+        return "Deployment initiated. Preview will update shortly.";
+      }
+      default:
+        return `Unknown tool: ${toolName}`;
     }
   }, []);
 
-  // Parse files from streamingCode in real-time (open-lovable approach, refactored to avoid loops)
-  // Also run when stage changes to "done" to capture any final files
-  useEffect(() => {
-    if (!streamingCode) return;
-    // Skip if idle (not generating yet) but allow "generating" and "done"
-    if (stage === "idle" || stage === "planning") return;
+  // CHEF PATTERN: useChat from @ai-sdk/react
+  const { messages, append, status, error } = useChat({
+    api: "/api/chat",
+    maxSteps: 64, // Chef uses 64 for iteration
 
-    // Extract ALL completed files from accumulated stream
-    // Chef-style: Clean content at parse time, not display time
-    const fileRegex = /<file path="([^"]+)">([^]*?)<\/file>/g;
-    let match;
-    const matches = [];
-    while ((match = fileRegex.exec(streamingCode)) !== null) {
-      // Normalize content: trim whitespace, ensure exactly one trailing newline (Chef approach)
-      const rawContent = match[2];
-      const cleanContent = rawContent.trim() + "\n";
-      matches.push({ path: match[1], content: cleanContent });
-    }
+    body: {
+      model: selectedModel,
+    },
 
-    // Apply updates/additions using functional update to avoid dependency loops
-    // IMPORTANT: Protect user-edited files from AI overwrites
-    let completedEntries = [];
-    setFiles((prev) => {
-      if (matches.length === 0) return prev;
-      const out = prev.slice();
-      const indexByPath = new Map(out.map((f, i) => [f.path, i]));
-      for (const m of matches) {
-        // PROTECTION: Skip if this file was edited by user OR is .env file that already exists
-        const isUserEdited = userEditedFilesRef.current.has(m.path);
-        const isExistingEnv = m.path === ".env" && indexByPath.has(m.path);
-        if (isUserEdited || isExistingEnv) {
-          console.log(
-            `[Studio] 🛡️ PROTECTED: Skipping overwrite of ${m.path} (user-edited or .env)`
+    // CHEF PATTERN: onToolCall - client-side tool execution
+    async onToolCall({ toolCall }) {
+      console.log("[Studio] Tool call received:", toolCall.toolName);
+      const result = await executeToolCall(toolCall.toolName, toolCall.args);
+      console.log("[Studio] Tool call finished:", result);
+      return result; // Return result to AI for iteration
+    },
+
+    onError: (err) => {
+      console.error("[Studio] Chat error:", err);
+      setLogs((prev) => [
+        ...prev,
+        {
+          type: "error",
+          message: err.message,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    },
+
+    onFinish: (message) => {
+      console.log("[Studio] Chat finished");
+
+      // Extract and write all files from final message
+      if (message.content) {
+        const files = extractFilesFromContent(message.content);
+        files.forEach((file) => {
+          globalVFS.writeFile(file.path, file.content);
+        });
+
+        if (files.length > 0) {
+          setLocalFiles(
+            files.map((f) => ({
+              path: f.path,
+              content: f.content,
+              type: getFileType(f.path),
+            }))
           );
-          continue;
+          setCompletedFiles(files);
         }
-
-        const fileExt = m.path.split(".").pop();
-        const fileType =
-          fileExt === "jsx" || fileExt === "js"
-            ? "javascript"
-            : fileExt === "css" || fileExt === "scss"
-            ? "css"
-            : fileExt === "json"
-            ? "json"
-            : "text";
-        const idx = indexByPath.get(m.path);
-        const isEdit = typeof idx === "number";
-
-        if (isEdit) {
-          // Update existing file (not user-edited)
-          out[idx] = {
-            ...out[idx],
-            content: m.content,
-            type: fileType,
-            updatedAt: new Date().toISOString(),
-            edited: true,
-          };
-        } else {
-          // Add new file
-          out.push({
-            path: m.path,
-            content: m.content,
-            type: fileType,
-            createdAt: new Date().toISOString(),
-            completed: true,
-          });
-        }
-
-        // Add to completedEntries for Workbench display (both new and edited files)
-        completedEntries.push({ path: m.path, content: m.content, isEdit });
       }
-      return out;
-    });
+    },
+  });
 
-    // Update nanostores ONLY for NEWLY completed files (Chef style - progressive, not batch)
-    // This prevents all files appearing at once
-    matches.forEach((m) => {
-      const isUserEdited = userEditedFilesRef.current.has(m.path);
-      const isExistingEnv =
-        m.path === ".env" && filesRef.current.some((f) => f.path === ".env");
-      const alreadyProcessed = processedActionsRef.current.has(m.path);
+  // Derive stage from status
+  const stage =
+    status === "streaming" || status === "submitted"
+      ? "generating"
+      : status === "ready" && localFiles.length > 0
+      ? "done"
+      : "idle";
 
-      if (!isUserEdited && !isExistingEnv && !alreadyProcessed) {
-        const isEdit = existingFilesSnapshot.some((f) => f.path === m.path);
-        // Mark as processed BEFORE adding to prevent duplicates
-        processedActionsRef.current.add(m.path);
-        // Add action with "complete" status for newly completed file
-        addAction({
-          path: m.path,
-          content: m.content,
-          isEdit,
-          status: "complete",
+  // Process completed files from messages
+  useEffect(() => {
+    if (messages.length === 0) return;
+
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role !== "assistant" || !lastMessage.content) return;
+
+    const content = lastMessage.content;
+    const files = extractFilesFromContent(content);
+
+    // Update files that we haven't processed yet
+    files.forEach((file) => {
+      if (!processedFilesRef.current.has(file.path)) {
+        processedFilesRef.current.add(file.path);
+
+        // Write to VFS
+        globalVFS.writeFile(file.path, file.content);
+
+        // Update local state
+        setLocalFiles((prev) => {
+          const existing = prev.findIndex((f) => f.path === file.path);
+          const newFile = {
+            path: file.path,
+            content: file.content,
+            type: getFileType(file.path),
+          };
+          if (existing >= 0) {
+            const updated = [...prev];
+            updated[existing] = newFile;
+            return updated;
+          }
+          return [...prev, newFile];
+        });
+
+        setCompletedFiles((prev) => {
+          const existing = prev.findIndex((f) => f.path === file.path);
+          if (existing >= 0) {
+            const updated = [...prev];
+            updated[existing] = file;
+            return updated;
+          }
+          return [...prev, file];
         });
       }
     });
+  }, [messages]);
 
-    if (completedEntries.length > 0) {
-      // Deduplicate: only add files not already in completedFiles
-      setCompletedFiles((prev) => {
-        const existingPaths = new Set(prev.map((f) => f.path));
-        const newEntries = completedEntries.filter(
-          (entry) => !existingPaths.has(entry.path)
-        );
-        if (newEntries.length === 0) return prev;
-        return [...prev, ...newEntries];
-      });
+  // Derive currently streaming file from messages (no setState needed)
+  const streamingFile = React.useMemo(() => {
+    if (messages.length === 0) return null;
 
-      // ALSO update the last message's completedFilesSnapshot in real-time (Chef-style persistence)
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const lastMsg = prev[prev.length - 1];
-        if (lastMsg.role !== "assistant") return prev;
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role !== "assistant" || !lastMessage.content) return null;
 
-        const existingPaths = new Set(
-          (lastMsg.completedFilesSnapshot || []).map((f) => f.path)
-        );
-        const newEntries = completedEntries.filter(
-          (entry) => !existingPaths.has(entry.path)
-        );
-        if (newEntries.length === 0) return prev;
+    const content = lastMessage.content;
+    const lastActionOpen = content.lastIndexOf(ACTION_TAG_OPEN);
 
-        return prev.map((msg, idx) => {
-          if (idx !== prev.length - 1) return msg;
-          return {
-            ...msg,
-            completedFilesSnapshot: [
-              ...(msg.completedFilesSnapshot || []),
-              ...newEntries,
-            ],
-          };
-        });
-      });
+    if (lastActionOpen === -1) return null;
 
-      setActiveTab((prev) => prev || "code");
+    const afterOpen = content.slice(lastActionOpen);
+    const hasClose = afterOpen.includes(ACTION_TAG_CLOSE);
+
+    if (hasClose) return null;
+
+    // This is a streaming file
+    const filePathMatch = afterOpen.match(/filePath="([^"]+)"/);
+    const typeMatch = afterOpen.match(/type="([^"]+)"/);
+
+    if (!filePathMatch || typeMatch?.[1] !== "file") return null;
+
+    let filePath = filePathMatch[1];
+    if (filePath.startsWith("/")) filePath = filePath.slice(1);
+
+    // Get content after the opening tag
+    const tagEnd = afterOpen.indexOf(">");
+    if (tagEnd === -1) return null;
+
+    let streamContent = afterOpen.slice(tagEnd + 1);
+    if (!filePath.endsWith(".md")) {
+      streamContent = cleanMarkdownSyntax(streamContent);
+      streamContent = cleanEscapedTags(streamContent);
     }
 
-    // Determine current streaming file by finding the LAST opened <file> that has no closing </file> yet
-    let lastOpenMatch = null;
-    const openTagRegex = /<file path="([^"]+)">/g;
-    let tmpMatch;
-    while ((tmpMatch = openTagRegex.exec(streamingCode)) !== null) {
-      lastOpenMatch = {
-        index: tmpMatch.index,
-        path: tmpMatch[1],
-        openTagLength: tmpMatch[0].length,
+    return {
+      path: filePath,
+      content: streamContent,
+      type: getFileType(filePath),
+    };
+  }, [messages]);
+
+  // Use streamingFile for display
+  const displayCurrentFile = streamingFile;
+
+  // Build display messages for Composer
+  const displayMessages = messages.map((msg, idx) => {
+    if (msg.role === "user") {
+      return {
+        id: msg.id || `user-${idx}`,
+        role: "user",
+        content: msg.content,
       };
     }
 
-    if (lastOpenMatch) {
-      const searchFrom = lastOpenMatch.index + lastOpenMatch.openTagLength;
-      const remainder = streamingCode.slice(searchFrom);
-      const hasClose = remainder.includes("</file>");
-      if (!hasClose) {
-        const filePath = lastOpenMatch.path;
-        // Chef-style: Clean streaming content - trim trailing whitespace only
-        // Don't add trailing newline for streaming (it's incomplete)
-        const partialContent = remainder.trimEnd();
-        const fileExt = filePath.split(".").pop();
-        const fileType =
-          fileExt === "jsx" || fileExt === "js"
-            ? "javascript"
-            : fileExt === "css" || fileExt === "scss"
-            ? "css"
-            : fileExt === "json"
-            ? "json"
-            : "text";
-        console.log(
-          `[Frontend] 📝 STREAMING: ${filePath} (${partialContent.length} chars)`
-        );
-        const isEdit = existingFilesSnapshot.some((f) => f.path === filePath);
-        setCurrentFile({
-          path: filePath,
-          content: partialContent,
-          type: fileType,
-        });
-        // Update nanostores with current streaming file (synchronous)
-        setCurrentStreamingFile({
-          path: filePath,
-          content: partialContent,
-          type: fileType,
-          isEdit,
-        });
-        // Sync streaming document with editor store (Chef pattern)
-        setStreamingDocument(filePath, partialContent);
-        // Active streaming takes precedence over any queued displays
-        displayQueueRef.current = [];
-        isDisplayingRef.current = false;
-      } else {
-        // Last opened file has closed; clear current streaming indicator
-        setCurrentFile(null);
-        setCurrentStreamingFile(null);
-      }
-    } else {
-      // No incomplete file - queue the most recent completed file for brief display (ensures visibility)
-      const lastCompleted =
-        matches.length > 0 ? matches[matches.length - 1] : null;
-      if (lastCompleted) {
-        const fileExt = lastCompleted.path.split(".").pop();
-        const fileType =
-          fileExt === "jsx" || fileExt === "js"
-            ? "javascript"
-            : fileExt === "css" || fileExt === "scss"
-            ? "css"
-            : fileExt === "json"
-            ? "json"
-            : "text";
-        if (lastQueuedPathRef.current !== lastCompleted.path) {
-          displayQueueRef.current.push({
-            path: lastCompleted.path,
-            content: lastCompleted.content,
-            type: fileType,
-          });
-          lastQueuedPathRef.current = lastCompleted.path;
-          processDisplayQueue();
-        }
-      } else {
-        // No active streaming and no new completed files - clear currentFile
-        setCurrentFile(null);
-      }
-    }
-  }, [streamingCode, stage, processDisplayQueue, existingFilesSnapshot]);
+    // Assistant message - strip artifacts for display
+    const displayContent = stripArtifacts(msg.content);
 
-  // Sandbox lifecycle functions
-  const startSandboxLogs = useCallback(async (id) => {
-    // Placeholder for future SSE logs from E2B provider
-    console.log(`[Studio] E2B logs streaming not enabled (sandbox: ${id})`);
-    return;
-  }, []);
+    // Build activities from completed files
+    const activities = completedFiles.map((file, fileIdx) => ({
+      id: `file-${fileIdx}`,
+      message: `Create ${file.path}`,
+      status: "completed",
+      file: file.path,
+    }));
 
-  const stopSandboxLogs = useCallback(() => {
-    if (logsReaderRef.current) {
-      logsReaderRef.current.cancel();
-      logsReaderRef.current = null;
-    }
-  }, []);
-
-  const createAndStartSandbox = useCallback(async () => {
-    if (sandboxBusyRef.current) {
-      console.log(
-        "[Studio] Sandbox operation already in progress — skipping duplicate call"
-      );
-      return;
-    }
-    sandboxBusyRef.current = true;
-    try {
-      console.log(`[Studio] Creating sandbox for project: ${projectId}`);
-      setStage("previewing");
-      setLogs([
-        {
-          level: "info",
-          message: "Creating E2B sandbox...",
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-
-      // Build files snapshot (path -> content) from client-side parsed files
-      const filesMap = {};
-      (filesRef.current || []).forEach((f) => {
-        if (f && f.path) filesMap[f.path] = f.content || "";
-      });
-
-      // Log .env content being sent to sandbox for debugging
-      if (filesMap[".env"]) {
-        console.log(
-          `[Studio] 📋 .env being sent to sandbox (${filesMap[".env"].length} chars)`
-        );
-      }
-
-      // Sync all user-edited files to VFS before starting preview (safety net)
-      const userEditedPaths = Array.from(userEditedFilesRef.current);
-      if (userEditedPaths.length > 0) {
-        console.log(
-          `[Studio] 🔄 Syncing ${userEditedPaths.length} user-edited files to VFS before preview`
-        );
-        await Promise.all(
-          userEditedPaths.map((filePath) => {
-            const content = filesMap[filePath];
-            if (content !== undefined) {
-              return fetch("/api/studio/sync-file", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ filePath, content }),
-              }).catch((err) =>
-                console.error(`[Studio] Failed to sync ${filePath}:`, err)
-              );
-            }
-            return Promise.resolve();
-          })
-        );
-      }
-
-      // Start E2B preview (creates sandbox, writes files, installs, starts dev)
-      const startResponse = await fetch("/api/preview/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, files: filesMap }),
-      });
-      if (!startResponse.ok) {
-        const err = await startResponse.json().catch(() => ({}));
-        throw new Error(err?.error || "Failed to start preview");
-      }
-      const startData = await startResponse.json();
-      setSandboxId(startData.sandboxId || null);
-      if (startData.url) {
-        setPreviewUrl(startData.url);
-        setActiveTab("preview");
-      }
-      setLogs((prev) => [
-        ...prev,
-        {
-          level: "info",
-          message: "Dependencies installed",
-          timestamp: new Date().toISOString(),
-        },
-        {
-          level: "info",
-          message: "Next.js dev server started",
-          timestamp: new Date().toISOString(),
-        },
-        ...(startData.url
-          ? [
-              {
-                level: "info",
-                message: `Preview available at: ${startData.url}`,
-                timestamp: new Date().toISOString(),
-              },
-            ]
-          : []),
-      ]);
-    } catch (error) {
-      console.error("[Studio] Sandbox error:", error);
-      setLogs((prev) => [
-        ...prev,
-        {
-          level: "error",
-          message: `Failed to start sandbox: ${error.message}`,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      // Whether success or error, stop the loader so the user can type again
-      setStage("done");
-    }
-    sandboxBusyRef.current = false;
-  }, [projectId]);
-
-  const stopSandbox = useCallback(async () => {
-    if (!projectId) return;
-
-    try {
-      console.log(`[Studio] Stopping sandbox for project: ${projectId}`);
-      stopSandboxLogs();
-
-      const response = await fetch("/api/preview/stop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
-      });
-
-      if (response.ok) {
-        setLogs((prev) => [
-          ...prev,
-          {
-            level: "info",
-            message: "Sandbox stopped",
-            timestamp: new Date().toISOString(),
-          },
-        ]);
-        setPreviewUrl(null);
-        setSandboxId(null);
-      }
-    } catch (error) {
-      console.error("[Studio] Failed to stop sandbox:", error);
-    }
-  }, [projectId, stopSandboxLogs]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopSandboxLogs();
-    };
-  }, [stopSandboxLogs]);
-
-  const handleSendMessage = async (message) => {
-    // Add user message
-    const userMessage = {
-      id: generateId(),
-      role: "user",
-      content: message,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userMessage]);
-
-    // Create AI message placeholder
-    const aiMessageId = generateId();
-    const aiMessage = {
-      id: aiMessageId,
+    return {
+      id: msg.id || `assistant-${idx}`,
       role: "assistant",
-      content: "Analyzing your request...",
-      timestamp: new Date().toISOString(),
-      activities: [],
+      content: displayContent || "Building your application...",
+      activities,
+      completedFilesSnapshot: completedFiles,
     };
-    setMessages((prev) => [...prev, aiMessage]);
+  });
 
-    try {
-      // Call /api/chat with SSE
-      // Build compact conversation history for iterative edits (last 8 messages)
-      const history = messages
-        .slice(-8)
-        .map((m) => ({ role: m.role, content: m.content }));
+  // Send message handler
+  const handleSendMessage = useCallback(
+    async (content) => {
+      if (!content.trim()) return;
 
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, model: selectedModel, history }),
+      console.log("[Studio] Sending:", content.slice(0, 50) + "...");
+
+      // Clear state for new generation
+      processedFilesRef.current.clear();
+      setLocalFiles([]);
+      setCompletedFiles([]);
+      globalVFS.clear?.();
+
+      // Append message (Chef pattern - useChat handles the rest)
+      await append({
+        role: "user",
+        content: content.trim(),
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("API error:", response.status, errorText);
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
-      console.log("Starting SSE stream...");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          console.log("SSE stream ended");
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let currentEvent = null;
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            if (currentEvent) {
-              try {
-                const data = JSON.parse(line.slice(5).trim());
-                console.log("SSE event:", currentEvent, data);
-                handleSSEEvent(currentEvent, data, aiMessageId);
-                currentEvent = null;
-              } catch (e) {
-                console.error("Failed to parse SSE data:", e, line);
-              }
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Chat error:", error);
-      setStage("idle");
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === aiMessageId
-            ? {
-                ...msg,
-                content: `Error: ${error.message}`,
-                activities: [
-                  ...msg.activities,
-                  {
-                    id: Date.now(),
-                    message: "Failed to generate plan",
-                    status: "error",
-                  },
-                ],
-              }
-            : msg
-        )
-      );
-    }
-  };
-
-  const handleSSEEvent = (event, data, messageId) => {
-    switch (event) {
-      case "stage":
-        setStage(data.stage);
-        if (data.stage === "generating") {
-          console.log(`[Frontend] 🎬 NEW GENERATION STARTED - Clearing state`);
-          setStreamingCode(""); // Clear streaming code on new generation
-          setCurrentFile(null);
-          setCompletedFiles([]); // Clear per-generation left panel blocks only
-          clearActions(); // Clear nanostores workbench actions (synchronous)
-          processedActionsRef.current.clear(); // Clear processed actions tracker
-          // IMPORTANT: Do NOT clear files; we keep existing project for iterative edits
-          // Snapshot existing files for Edit vs Create detection in Workbench
-          setExistingFilesSnapshot(filesRef.current.slice());
-          // Reset display queue
-          displayQueueRef.current = [];
-          isDisplayingRef.current = false;
-          // Reset explanation gating and buffers
-          explanationReceivedRef.current = false;
-          preExplanationRawBufferRef.current = "";
-          queuedActivitiesRef.current = [];
-          if (fallbackExplanationTimerRef.current) {
-            clearTimeout(fallbackExplanationTimerRef.current);
-            fallbackExplanationTimerRef.current = null;
-          }
-        }
-        break;
-
-      case "explanation":
-        // Add explanation text to AI message BEFORE other content (open-lovable approach)
-        if (data.text) {
-          explanationReceivedRef.current = true;
-          setMessages((prev) =>
-            prev.map((msg) => {
-              if (msg.id === messageId) {
-                // Set explanation as INITIAL content (will be FIRST message)
-                return {
-                  ...msg,
-                  content: data.text,
-                  hasExplanation: true, // Flag to prevent stream events from overwriting
-                };
-              }
-              return msg;
-            })
-          );
-          // Flush any buffered raw stream collected before explanation arrived
-          if (preExplanationRawBufferRef.current) {
-            setStreamingCode(
-              (prev) => prev + preExplanationRawBufferRef.current
-            );
-            preExplanationRawBufferRef.current = "";
-          }
-          // Drain queued activities to start building after explanation
-          if (queuedActivitiesRef.current.length > 0) {
-            const queued = queuedActivitiesRef.current.slice();
-            queuedActivitiesRef.current = [];
-            for (const queuedData of queued) {
-              // Re-run the activity handling logic synchronously
-              if (queuedData.status === "in_progress" && queuedData.file) {
-                const fileTypeExt = (
-                  queuedData.file.split(".").pop() || ""
-                ).toLowerCase();
-                const fileType =
-                  fileTypeExt === "jsx" || fileTypeExt === "js"
-                    ? "javascript"
-                    : fileTypeExt === "css" || fileTypeExt === "scss"
-                    ? "css"
-                    : fileTypeExt === "json"
-                    ? "json"
-                    : "text";
-                setCurrentFile({
-                  path: queuedData.file,
-                  content: "",
-                  type: fileType,
-                });
-              } else if (queuedData.status === "completed" && queuedData.file) {
-                setCurrentFile((prev) =>
-                  prev && prev.path === queuedData.file ? null : prev
-                );
-              }
-            }
-          }
-          // Clear any pending fallback timer
-          if (fallbackExplanationTimerRef.current) {
-            clearTimeout(fallbackExplanationTimerRef.current);
-            fallbackExplanationTimerRef.current = null;
-          }
-        }
-        break;
-
-      case "rawStream":
-        // Accumulate all raw streaming text (open-lovable approach)
-        if (data.text && data.raw) {
-          if (!explanationReceivedRef.current) {
-            // Buffer until explanation is visible; set a short fallback timer in case the model omits it
-            preExplanationRawBufferRef.current += data.text;
-            if (!fallbackExplanationTimerRef.current) {
-              fallbackExplanationTimerRef.current = setTimeout(() => {
-                if (!explanationReceivedRef.current) {
-                  explanationReceivedRef.current = true;
-                  setMessages((prev) =>
-                    prev.map((msg) => {
-                      if (msg.id === messageId) {
-                        return {
-                          ...msg,
-                          content:
-                            "I'll build the requested app and then start streaming the full code files.",
-                          hasExplanation: true,
-                        };
-                      }
-                      return msg;
-                    })
-                  );
-                  // Flush buffered stream
-                  if (preExplanationRawBufferRef.current) {
-                    setStreamingCode(
-                      (prev) => prev + preExplanationRawBufferRef.current
-                    );
-                    preExplanationRawBufferRef.current = "";
-                  }
-                }
-              }, 1000);
-            }
-            return;
-          }
-          setStreamingCode((prev) => prev + data.text);
-        }
-        break;
-
-      case "activity":
-        // Update activities (dedupe by file/message) and set currentFile on start
-        if (!explanationReceivedRef.current) {
-          // Queue activity to run after explanation is displayed
-          queuedActivitiesRef.current.push({ ...data });
-          return;
-        }
-        if (data.status === "in_progress" && data.file) {
-          const fileTypeExt = (data.file.split(".").pop() || "").toLowerCase();
-          const fileType =
-            fileTypeExt === "jsx" || fileTypeExt === "js"
-              ? "javascript"
-              : fileTypeExt === "css" || fileTypeExt === "scss"
-              ? "css"
-              : fileTypeExt === "json"
-              ? "json"
-              : "text";
-          // Show streaming tab immediately when file starts
-          setCurrentFile({ path: data.file, content: "", type: fileType });
-        } else if (data.status === "completed" && data.file) {
-          // Clear current streaming indicator for this file
-          setCurrentFile((prev) =>
-            prev && prev.path === data.file ? null : prev
-          );
-        }
-
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (msg.id !== messageId) return msg;
-            const activities = msg.activities || [];
-            // Try to update an existing activity entry for the same file/message
-            const idx = activities.findIndex(
-              (a) =>
-                (data.file && a.file === data.file) ||
-                a.message === data.message
-            );
-            if (idx !== -1) {
-              const updated = activities.slice();
-              updated[idx] = {
-                ...updated[idx],
-                status: data.status || updated[idx].status,
-              };
-              return { ...msg, activities: updated };
-            }
-            // Otherwise append
-            return {
-              ...msg,
-              activities: [
-                ...activities,
-                {
-                  id: generateId(),
-                  message: data.message,
-                  status: data.status || "in_progress",
-                  file: data.file,
-                },
-              ],
-            };
-          })
-        );
-        break;
-
-      case "stream":
-        // Stream AI response text (conversational only, no XML)
-        if (data.content && typeof data.content === "string") {
-          setMessages((prev) =>
-            prev.map((msg) => {
-              if (msg.id === messageId) {
-                const currentContent = msg.content || "";
-                const hasExplanation = msg.hasExplanation;
-
-                // If has explanation, append AFTER it with separator
-                if (
-                  hasExplanation &&
-                  currentContent &&
-                  !currentContent.includes(data.content)
-                ) {
-                  return {
-                    ...msg,
-                    content: currentContent + "\n\n" + data.content,
-                  };
-                }
-
-                // Otherwise, clear placeholder and set content
-                const isPlaceholder =
-                  currentContent === "Analyzing your request...";
-                const newContent = isPlaceholder
-                  ? data.content
-                  : currentContent + data.content;
-
-                return {
-                  ...msg,
-                  content: newContent,
-                };
-              }
-              return msg;
-            })
-          );
-        }
-        break;
-
-      case "file_write":
-        // DEPRECATED: Files are now parsed client-side from streamingCode
-        // This event is kept for backwards compatibility but does nothing
-        console.log(
-          `[Frontend] ⚠️ file_write event received but ignored (using client-side parsing)`
-        );
-        break;
-
-      case "complete":
-        // All files generated
-        console.log(
-          `[Frontend] complete event received, files:`,
-          data.files ? Object.keys(data.files).length : 0
-        );
-
-        // Stop spinner
-        setStage("done");
-        // Ensure timers/queues cleared
-        explanationReceivedRef.current = true;
-        if (fallbackExplanationTimerRef.current) {
-          clearTimeout(fallbackExplanationTimerRef.current);
-          fallbackExplanationTimerRef.current = null;
-        }
-
-        // Finalize activities and attach final summary + snapshot of completed files
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (msg.id !== messageId) return msg;
-            const activities = (msg.activities || []).map((a) =>
-              a.status === "in_progress" ? { ...a, status: "completed" } : a
-            );
-            // Use ref to get latest completedFiles value (avoid stale closure)
-            const latestCompletedFiles = completedFilesRef.current;
-            const snapshot =
-              latestCompletedFiles && latestCompletedFiles.length
-                ? [...latestCompletedFiles]
-                : msg.completedFilesSnapshot || [];
-            return {
-              ...msg,
-              activities,
-              postContent: data.finalMessage
-                ? String(data.finalMessage)
-                : msg.postContent,
-              completedFilesSnapshot: snapshot,
-            };
-          })
-        );
-
-        // Clear streaming state BUT keep files
-        setStreamingCode("");
-        setCurrentFile(null);
-
-        // Always MERGE backend files into client-parsed files to ensure completeness
-        // This prevents cases where a few files were parsed client-side, but others were missed.
-        // IMPORTANT: Protect user-edited files from being overwritten by VFS content
-        setFiles((prev) => {
-          const existingByPath = new Map(prev.map((f) => [f.path, f]));
-          const merged = prev.slice();
-          const backendEntries = data.files ? Object.entries(data.files) : [];
-          let added = 0;
-          let updated = 0;
-          let protected_ = 0;
-          for (const [path, rawContent] of backendEntries) {
-            // Chef-style: Normalize content - trim + single trailing newline
-            const content = rawContent.trim() + "\n";
-            const existing = existingByPath.get(path);
-
-            // PROTECTION: Never overwrite user-edited files or .env files
-            const isUserEdited = userEditedFilesRef.current.has(path);
-            const isEnvFile = path === ".env" || path.endsWith("/.env");
-            if (existing && (isUserEdited || isEnvFile)) {
-              console.log(
-                `[Frontend] 🛡️ PROTECTED in complete: Keeping user's ${path}`
-              );
-              protected_++;
-              continue;
-            }
-
-            if (!existing) {
-              const fileExt = path.split(".").pop();
-              const fileType =
-                fileExt === "jsx" || fileExt === "js"
-                  ? "javascript"
-                  : fileExt === "css" || fileExt === "scss"
-                  ? "css"
-                  : fileExt === "json"
-                  ? "json"
-                  : "text";
-              merged.push({
-                path,
-                content,
-                type: fileType,
-                createdAt: new Date().toISOString(),
-                completed: true,
-              });
-              added++;
-            } else if (existing.content !== content) {
-              // Update stale content if backend has the authoritative final version
-              // Create new object to avoid mutation issues
-              const idx = merged.findIndex((f) => f.path === path);
-              if (idx !== -1) {
-                merged[idx] = {
-                  ...merged[idx],
-                  content,
-                  updatedAt: new Date().toISOString(),
-                };
-              }
-              updated++;
-            }
-          }
-          if (backendEntries.length > 0) {
-            console.log(
-              `[Frontend] ✅ Finalized files: kept ${prev.length}, added ${added}, updated ${updated}, protected ${protected_}`
-            );
-          }
-          return merged;
-        });
-
-        // Ensure the assistant message has some human-readable completion text
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (msg.id === messageId) {
-              const hasConversationalText =
-                msg.content && msg.content !== "Analyzing your request...";
-              return {
-                ...msg,
-                content: hasConversationalText
-                  ? msg.content
-                  : `Generated ${
-                      Object.keys(data.files || {}).length
-                    } files successfully!`,
-              };
-            }
-            return msg;
-          })
-        );
-
-        // Preview is now manual - user clicks "Start Preview" button
-        // Stage set to 'done' so user can manually start preview when ready
-        setStage("done");
-
-        // IMPORTANT: Mark ALL nanostores actions as complete
-        // This ensures no files remain in "pending" or "running" state
-        requestAnimationFrame(() => {
-          markAllActionsComplete();
-          setCurrentStreamingFile(null);
-        });
-
-        break;
-
-      case "error":
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === messageId
-              ? {
-                  ...msg,
-                  content: `Error: ${data.message}`,
-                  activities: [
-                    ...msg.activities,
-                    {
-                      id: Date.now(),
-                      message: data.message,
-                      status: "error",
-                    },
-                  ],
-                }
-              : msg
-          )
-        );
-        break;
-
-      default:
-        console.warn("Unknown SSE event:", event, data);
-    }
-  };
-
-  // Handle file click from Workbench - switch to code tab and select file
-  const handleFileClick = useCallback((filePath) => {
-    setActiveTab("code");
-    setSelectedFileFromWorkbench(filePath);
-  }, []);
-
-  // Handle file content updates from the editor
-  const handleFileUpdate = useCallback((filePath, newContent) => {
-    console.log(`[Studio] File updated by user: ${filePath}`);
-
-    // Mark this file as user-edited to protect from AI overwrites
-    userEditedFilesRef.current.add(filePath);
-    console.log(`[Studio] 🛡️ File marked as protected: ${filePath}`);
-
-    // Update client-side state
-    setFiles((prev) =>
-      prev.map((f) =>
-        f.path === filePath
-          ? {
-              ...f,
-              content: newContent,
-              updatedAt: new Date().toISOString(),
-              userEdited: true,
-            }
-          : f
-      )
-    );
-    // Update filesRef for sandbox sync
-    filesRef.current = filesRef.current.map((f) =>
-      f.path === filePath
-        ? {
-            ...f,
-            content: newContent,
-            updatedAt: new Date().toISOString(),
-            userEdited: true,
-          }
-        : f
-    );
-
-    // Sync to server VFS so AI has correct context on next iteration
-    fetch("/api/studio/sync-file", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filePath, content: newContent }),
-    }).catch((err) => {
-      console.error("[Studio] Failed to sync file to VFS:", err);
-    });
-  }, []);
+    },
+    [append]
+  );
 
   return (
-    <div className={styles.studioPage}>
+    <>
       <StudioLayout
         leftPanel={
           <Composer
-            messages={messages}
-            stage={stage}
+            messages={displayMessages}
             onSendMessage={handleSendMessage}
             selectedModel={selectedModel}
             onModelChange={setSelectedModel}
-            streamingCode={streamingCode}
-            currentFile={currentFile}
+            streamingCode=""
+            currentFile={displayCurrentFile}
             completedFiles={completedFiles}
-            existingFiles={existingFilesSnapshot}
-            onFileClick={handleFileClick}
+            existingFiles={[]}
+            stage={stage}
           />
         }
         rightPanel={
           <RightPanel
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            files={files}
+            files={localFiles}
             logs={logs}
             previewUrl={previewUrl}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            selectedFileFromWorkbench={null}
             stage={stage}
-            currentFile={currentFile}
-            onPreviewRestart={createAndStartSandbox}
-            onPreviewStop={stopSandbox}
-            onFileUpdate={handleFileUpdate}
-            selectedFileFromWorkbench={selectedFileFromWorkbench}
-            onClearWorkbenchSelection={() => setSelectedFileFromWorkbench(null)}
+            currentFile={displayCurrentFile}
+            onFileUpdate={(path, content) => {
+              globalVFS.writeFile(path, content);
+              setLocalFiles((prev) =>
+                prev.map((f) => (f.path === path ? { ...f, content } : f))
+              );
+            }}
           />
         }
       />
-    </div>
+
+      {/* Error display */}
+      {error && (
+        <div className={styles.errorBanner}>Error: {error.message}</div>
+      )}
+    </>
   );
 }
