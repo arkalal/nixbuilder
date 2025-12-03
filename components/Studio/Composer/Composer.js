@@ -8,7 +8,19 @@ import MessageTimeline from "../MessageTimeline/MessageTimeline";
 import ModelSelector from "../ModelSelector/ModelSelector";
 import styles from "./Composer.module.scss";
 
-export default function Composer({ messages, stage, onSendMessage, selectedModel, onModelChange, streamingCode, currentFile, completedFiles }) {
+export default function Composer({
+  messages,
+  stage,
+  onSendMessage,
+  selectedModel,
+  onModelChange,
+  streamingCode,
+  currentFile,
+  completedFiles,
+  workbenchFiles,
+  onFileClick,
+  streamingMessageId,
+}) {
   const [inputValue, setInputValue] = useState("");
   const textareaRef = useRef(null);
   const timelineRef = useRef(null);
@@ -28,7 +40,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
 
     onSendMessage(inputValue.trim());
     setInputValue("");
-    
+
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -44,7 +56,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
 
   const handleInput = (e) => {
     setInputValue(e.target.value);
-    
+
     // Auto-resize textarea
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -66,13 +78,29 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
       </div>
 
       <div className={styles.timeline} ref={timelineRef}>
-        <MessageTimeline 
+        <MessageTimeline
           messages={messages}
           streamingCode={streamingCode}
           currentFile={currentFile}
           completedFiles={completedFiles}
+          workbenchFiles={workbenchFiles}
+          onFileClick={onFileClick}
+          streamingMessageId={streamingMessageId}
         />
       </div>
+
+      {/* Cooking status indicator - shown when generating */}
+      {stage === "generating" && (
+        <motion.div
+          className={styles.cookingStatus}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 10 }}
+        >
+          <FiLoader className={styles.cookingLoader} />
+          <span>Cooking...</span>
+        </motion.div>
+      )}
 
       <div className={styles.inputContainer}>
         <form onSubmit={handleSubmit} className={styles.form}>
@@ -106,7 +134,7 @@ export default function Composer({ messages, stage, onSendMessage, selectedModel
             </motion.button>
           </div>
         </form>
-        
+
         <div className={styles.hint}>
           <kbd>Enter</kbd> to send • <kbd>Shift + Enter</kbd> for new line
         </div>

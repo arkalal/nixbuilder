@@ -129,18 +129,23 @@ Instruction: ${message}`;
             let generatedCode = "";
             let currentFilePath = "";
             let isInFile = false;
-            let isInTag = false;
-            let conversationalBuffer = "";
             let explanationSent = false;
             let inExplanation = false;
             let explanationBuffer = "";
             let fileTagBuffer = ""; // small rolling buffer
+
+            // Professional tag-based content separation (like bolt.diy)
+            // Use accumulated buffer for reliable tag detection across chunk boundaries
+            let accumulatedText = "";
+            let lastProcessedPosition = 0;
+            let conversationalBuffer = ""; // Track conversational text outside tags
 
             console.log("[API] Starting to stream text...");
             for await (const textPart of result.textStream) {
               const text = textPart || "";
               // Accumulate ALL text
               generatedCode += text;
+              accumulatedText += text;
 
               // Handle explanation tag streaming-first
               if (!explanationSent) {
@@ -174,36 +179,55 @@ Instruction: ${message}`;
               // Stream raw text for code display
               send("rawStream", { text, raw: true });
 
-              // Tag boundary detection
-              const hasOpenTag =
-                /<(file|package|packages|explanation|command|structure|template)\b/.test(
-                  text
-                );
-              const hasCloseTag =
-                /<\/(file|package|packages|explanation|command|structure|template)>/.test(
-                  text
-                );
+              // Professional tag-based parsing - extract ONLY text outside ALL tags
+              // Process accumulated text to find conversational content
+              const tagPattern =
+                /<(file|package|packages|explanation|command|structure|template)\b[^>]*>[\s\S]*?<\/\1>|<(file|package|packages|explanation|command|structure|template)\b[^>]*>/g;
 
-              if (hasOpenTag) {
-                if (conversationalBuffer.trim() && !isInTag) {
-                  console.log(
-                    `[API] Sending conversational text: "${conversationalBuffer
-                      .trim()
-                      .substring(0, 50)}..."`
-                  );
-                  send("stream", { content: conversationalBuffer.trim() });
-                  conversationalBuffer = "";
+              // Find text segments that are outside any tags
+              let lastIndex = 0;
+              let match;
+              let conversationalText = "";
+              const tempText = accumulatedText.substring(lastProcessedPosition);
+
+              // Check if we're potentially in an incomplete tag
+              const hasIncompleteTag =
+                /<[^>]*$/.test(tempText) ||
+                (/<(file|package|packages|explanation|command|structure|template)\b/.test(
+                  tempText
+                ) &&
+                  !/<\/(file|package|packages|explanation|command|structure|template)>/.test(
+                    tempText.substring(tempText.lastIndexOf("<"))
+                  ));
+
+              if (!hasIncompleteTag) {
+                // Safe to process - no incomplete tags
+                tagPattern.lastIndex = 0;
+                while ((match = tagPattern.exec(tempText)) !== null) {
+                  // Add text before this tag match
+                  if (match.index > lastIndex) {
+                    conversationalText += tempText.substring(
+                      lastIndex,
+                      match.index
+                    );
+                  }
+                  lastIndex = match.index + match[0].length;
                 }
-                isInTag = true;
-              }
+                // Add remaining text after last tag
+                conversationalText += tempText.substring(lastIndex);
+                lastProcessedPosition = accumulatedText.length;
 
-              if (hasCloseTag) {
-                isInTag = false;
-                conversationalBuffer = "";
-              }
-
-              if (!isInTag && !hasOpenTag && !hasCloseTag) {
-                conversationalBuffer += text;
+                // Send clean conversational text (no tags, no code)
+                const cleanText = conversationalText.trim();
+                if (
+                  cleanText &&
+                  !cleanText.startsWith("<") &&
+                  !cleanText.includes("</")
+                ) {
+                  send("stream", { content: cleanText });
+                  // Accumulate for final message
+                  conversationalBuffer += cleanText + " ";
+                }
               }
 
               // Detect file starts

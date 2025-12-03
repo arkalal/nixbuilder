@@ -26,9 +26,26 @@ export default function RightPanel({
   onPreviewRestart,
   onPreviewStop,
   onFileUpdate, // Callback when file content is edited
+  externalSelectedFile, // File selected from left panel workbench
 }) {
   const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
   const [closedTabs, setClosedTabs] = useState(new Set()); // Track explicitly closed tabs
+
+  // Handle external file selection from workbench (left panel)
+  React.useEffect(() => {
+    if (externalSelectedFile) {
+      setManuallySelectedFile(externalSelectedFile);
+      // Remove from closed tabs to ensure it's open
+      setClosedTabs((prev) => {
+        if (prev.has(externalSelectedFile)) {
+          const next = new Set(prev);
+          next.delete(externalSelectedFile);
+          return next;
+        }
+        return prev;
+      });
+    }
+  }, [externalSelectedFile]);
 
   // Compute open tabs: all file paths minus explicitly closed ones
   const openTabs = React.useMemo(() => {

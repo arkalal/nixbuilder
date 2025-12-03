@@ -27,6 +27,19 @@ export default function StudioPage() {
   const [streamingCode, setStreamingCode] = useState("");
   const [currentFile, setCurrentFile] = useState(null); // { path, content, type }
   const [completedFiles, setCompletedFiles] = useState([]); // Persisted completed files for this generation
+  const [externalSelectedFile, setExternalSelectedFile] = useState(null); // File selected from left panel workbench
+
+  // Workbench files state - tracks all files with their statuses for left panel display
+  // This is separate from completedFiles to ensure proper accumulation and persistence
+  const [workbenchFiles, setWorkbenchFiles] = useState([]); // { path, status: 'in_progress' | 'completed', action: 'Create' | 'Edit' }
+
+  // Track the ID of the currently streaming message - ONLY this message should animate
+  const [streamingMessageId, setStreamingMessageId] = useState(null);
+
+  // Track if explanation text streaming is complete - workbench should only show after this
+  const [explanationStreamingComplete, setExplanationStreamingComplete] =
+    useState(false);
+  const explanationStreamingCompleteRef = useRef(false);
   // Queue to briefly display fast-completing files so each file is visibly streamed
   const displayQueueRef = useRef([]);
   const isDisplayingRef = useRef(false);
@@ -397,6 +410,9 @@ export default function StudioPage() {
     };
     setMessages((prev) => [...prev, aiMessage]);
 
+    // Set this as the currently streaming message - ONLY this message should animate
+    setStreamingMessageId(aiMessageId);
+
     try {
       // Call /api/chat with SSE
       // Build compact conversation history for iterative edits (last 8 messages)
@@ -480,9 +496,26 @@ export default function StudioPage() {
         setStage(data.stage);
         if (data.stage === "generating") {
           console.log(`[Frontend] 🎬 NEW GENERATION STARTED - Clearing state`);
+
+          // Mark ALL previous assistant messages as complete to stop their streaming
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.role === "assistant" && !msg.isComplete) {
+                return {
+                  ...msg,
+                  isComplete: true, // Mark as complete to stop streaming animation
+                };
+              }
+              return msg;
+            })
+          );
+
           setStreamingCode(""); // Clear streaming code on new generation
           setCurrentFile(null);
           setCompletedFiles([]); // Clear per-generation left panel blocks only
+          setWorkbenchFiles([]); // Clear workbench files for new generation
+          setExplanationStreamingComplete(false); // Reset explanation streaming state
+          explanationStreamingCompleteRef.current = false;
           // IMPORTANT: Do NOT clear files; we keep existing project for iterative edits
           // Reset display queue
           displayQueueRef.current = [];
@@ -498,31 +531,60 @@ export default function StudioPage() {
         }
         break;
 
-      case "explanation":
+      case "explanation": {
         // Add explanation text to AI message BEFORE other content (open-lovable approach)
-        if (data.text) {
-          explanationReceivedRef.current = true;
-          setMessages((prev) =>
-            prev.map((msg) => {
-              if (msg.id === messageId) {
-                // Set explanation as INITIAL content (will be FIRST message)
-                return {
-                  ...msg,
-                  content: data.text,
-                  hasExplanation: true, // Flag to prevent stream events from overwriting
-                };
-              }
-              return msg;
-            })
+        // Ensure we have meaningful content - use fallback if empty
+        const explanationContent =
+          data.text && data.text.trim()
+            ? data.text
+            : "I'll help you build your app. Let me start generating the code...";
+
+        console.log(
+          `[Frontend] 📝 Explanation received: "${explanationContent.substring(
+            0,
+            100
+          )}..."`
+        );
+        explanationReceivedRef.current = true;
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id === messageId) {
+              // Set explanation as INITIAL content (will be FIRST message)
+              return {
+                ...msg,
+                content: explanationContent,
+                hasExplanation: true, // Flag to prevent stream events from overwriting
+              };
+            }
+            return msg;
+          })
+        );
+
+        // Calculate delay based on explanation text length for streaming animation
+        // Approximately 30ms per word (matching StreamingTextContent speed)
+        const wordCount = explanationContent.split(/\s+/).length;
+        const streamingDelay = Math.min(wordCount * 30 + 500, 3000); // Cap at 3 seconds
+
+        // Delay workbench AND code streaming until explanation text finishes streaming
+        setTimeout(() => {
+          console.log(
+            `[Frontend] ✅ Explanation streaming complete! Starting code generation display...`
           );
-          // Flush any buffered raw stream collected before explanation arrived
+          setExplanationStreamingComplete(true);
+          explanationStreamingCompleteRef.current = true;
+
+          // NOW flush any buffered raw stream AFTER explanation text streaming completes
           if (preExplanationRawBufferRef.current) {
+            console.log(
+              `[Frontend] 📦 Flushing ${preExplanationRawBufferRef.current.length} chars of buffered code`
+            );
             setStreamingCode(
               (prev) => prev + preExplanationRawBufferRef.current
             );
             preExplanationRawBufferRef.current = "";
           }
-          // Drain queued activities to start building after explanation
+
+          // NOW drain queued activities to start building after explanation streaming completes
           if (queuedActivitiesRef.current.length > 0) {
             const queued = queuedActivitiesRef.current.slice();
             queuedActivitiesRef.current = [];
@@ -545,31 +607,80 @@ export default function StudioPage() {
                   content: "",
                   type: fileType,
                 });
+                // Add to workbench files
+                setWorkbenchFiles((prev) => {
+                  const existingIdx = prev.findIndex(
+                    (f) => f.path === queuedData.file
+                  );
+                  if (existingIdx >= 0) return prev;
+                  return [
+                    ...prev,
+                    {
+                      path: queuedData.file,
+                      status: "in_progress",
+                      action: queuedData.message?.includes("Edit")
+                        ? "Edit"
+                        : "Create",
+                    },
+                  ];
+                });
               } else if (queuedData.status === "completed" && queuedData.file) {
                 setCurrentFile((prev) =>
                   prev && prev.path === queuedData.file ? null : prev
                 );
+                // Update workbench file status
+                setWorkbenchFiles((prev) => {
+                  const existingIdx = prev.findIndex(
+                    (f) => f.path === queuedData.file
+                  );
+                  if (existingIdx >= 0) {
+                    const updated = [...prev];
+                    updated[existingIdx] = {
+                      ...updated[existingIdx],
+                      status: "completed",
+                    };
+                    return updated;
+                  }
+                  return [
+                    ...prev,
+                    {
+                      path: queuedData.file,
+                      status: "completed",
+                      action: queuedData.message?.includes("Edit")
+                        ? "Edit"
+                        : "Create",
+                    },
+                  ];
+                });
               }
             }
           }
-          // Clear any pending fallback timer
-          if (fallbackExplanationTimerRef.current) {
-            clearTimeout(fallbackExplanationTimerRef.current);
-            fallbackExplanationTimerRef.current = null;
-          }
+        }, streamingDelay);
+
+        // Clear any pending fallback timer
+        if (fallbackExplanationTimerRef.current) {
+          clearTimeout(fallbackExplanationTimerRef.current);
+          fallbackExplanationTimerRef.current = null;
         }
         break;
+      }
 
       case "rawStream":
         // Accumulate all raw streaming text (open-lovable approach)
         if (data.text && data.raw) {
-          if (!explanationReceivedRef.current) {
-            // Buffer until explanation is visible; set a short fallback timer in case the model omits it
+          // Block until BOTH explanation is received AND text streaming animation is complete
+          if (
+            !explanationReceivedRef.current ||
+            !explanationStreamingCompleteRef.current
+          ) {
+            // Buffer until explanation text streaming completes
             preExplanationRawBufferRef.current += data.text;
             if (!fallbackExplanationTimerRef.current) {
               fallbackExplanationTimerRef.current = setTimeout(() => {
                 if (!explanationReceivedRef.current) {
                   explanationReceivedRef.current = true;
+                  setExplanationStreamingComplete(true);
+                  explanationStreamingCompleteRef.current = true;
                   setMessages((prev) =>
                     prev.map((msg) => {
                       if (msg.id === messageId) {
@@ -590,6 +701,61 @@ export default function StudioPage() {
                     );
                     preExplanationRawBufferRef.current = "";
                   }
+                  // Also process any queued activities now
+                  if (queuedActivitiesRef.current.length > 0) {
+                    const queued = queuedActivitiesRef.current.slice();
+                    queuedActivitiesRef.current = [];
+                    for (const queuedData of queued) {
+                      if (
+                        queuedData.status === "in_progress" &&
+                        queuedData.file
+                      ) {
+                        setWorkbenchFiles((prev) => {
+                          const existingIdx = prev.findIndex(
+                            (f) => f.path === queuedData.file
+                          );
+                          if (existingIdx >= 0) return prev;
+                          return [
+                            ...prev,
+                            {
+                              path: queuedData.file,
+                              status: "in_progress",
+                              action: queuedData.message?.includes("Edit")
+                                ? "Edit"
+                                : "Create",
+                            },
+                          ];
+                        });
+                      } else if (
+                        queuedData.status === "completed" &&
+                        queuedData.file
+                      ) {
+                        setWorkbenchFiles((prev) => {
+                          const existingIdx = prev.findIndex(
+                            (f) => f.path === queuedData.file
+                          );
+                          if (existingIdx >= 0) {
+                            const updated = [...prev];
+                            updated[existingIdx] = {
+                              ...updated[existingIdx],
+                              status: "completed",
+                            };
+                            return updated;
+                          }
+                          return [
+                            ...prev,
+                            {
+                              path: queuedData.file,
+                              status: "completed",
+                              action: queuedData.message?.includes("Edit")
+                                ? "Edit"
+                                : "Create",
+                            },
+                          ];
+                        });
+                      }
+                    }
+                  }
                 }
               }, 1000);
             }
@@ -601,30 +767,87 @@ export default function StudioPage() {
 
       case "activity":
         // Update activities (dedupe by file/message) and set currentFile on start
-        if (!explanationReceivedRef.current) {
-          // Queue activity to run after explanation is displayed
+        // Queue activities until BOTH explanation is received AND streaming animation is complete
+        if (
+          !explanationReceivedRef.current ||
+          !explanationStreamingCompleteRef.current
+        ) {
+          // Queue activity to run after explanation streaming completes
           queuedActivitiesRef.current.push({ ...data });
           return;
         }
-        if (data.status === "in_progress" && data.file) {
-          const fileTypeExt = (data.file.split(".").pop() || "").toLowerCase();
-          const fileType =
-            fileTypeExt === "jsx" || fileTypeExt === "js"
-              ? "javascript"
-              : fileTypeExt === "css" || fileTypeExt === "scss"
-              ? "css"
-              : fileTypeExt === "json"
-              ? "json"
-              : "text";
-          // Show streaming tab immediately when file starts
-          setCurrentFile({ path: data.file, content: "", type: fileType });
-        } else if (data.status === "completed" && data.file) {
-          // Clear current streaming indicator for this file
-          setCurrentFile((prev) =>
-            prev && prev.path === data.file ? null : prev
-          );
+
+        // Handle workbench file tracking - accumulate files with their statuses
+        if (data.file) {
+          if (data.status === "in_progress") {
+            const fileTypeExt = (
+              data.file.split(".").pop() || ""
+            ).toLowerCase();
+            const fileType =
+              fileTypeExt === "jsx" || fileTypeExt === "js"
+                ? "javascript"
+                : fileTypeExt === "css" || fileTypeExt === "scss"
+                ? "css"
+                : fileTypeExt === "json"
+                ? "json"
+                : "text";
+
+            // Show streaming tab immediately when file starts
+            setCurrentFile({ path: data.file, content: "", type: fileType });
+
+            // Add to workbench files with 'in_progress' status (if not already present)
+            setWorkbenchFiles((prev) => {
+              const existingIdx = prev.findIndex((f) => f.path === data.file);
+              if (existingIdx >= 0) {
+                // Update existing file to in_progress
+                const updated = [...prev];
+                updated[existingIdx] = {
+                  ...updated[existingIdx],
+                  status: "in_progress",
+                };
+                return updated;
+              }
+              // Add new file with in_progress status
+              return [
+                ...prev,
+                {
+                  path: data.file,
+                  status: "in_progress",
+                  action: data.message?.includes("Edit") ? "Edit" : "Create",
+                },
+              ];
+            });
+          } else if (data.status === "completed") {
+            // Clear current streaming indicator for this file
+            setCurrentFile((prev) =>
+              prev && prev.path === data.file ? null : prev
+            );
+
+            // Update workbench file to 'completed' status (KEEP in list, just update status)
+            setWorkbenchFiles((prev) => {
+              const existingIdx = prev.findIndex((f) => f.path === data.file);
+              if (existingIdx >= 0) {
+                const updated = [...prev];
+                updated[existingIdx] = {
+                  ...updated[existingIdx],
+                  status: "completed",
+                };
+                return updated;
+              }
+              // File wasn't in list (edge case), add it as completed
+              return [
+                ...prev,
+                {
+                  path: data.file,
+                  status: "completed",
+                  action: data.message?.includes("Edit") ? "Edit" : "Create",
+                },
+              ];
+            });
+          }
         }
 
+        // Update message activities for backward compatibility
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
@@ -661,32 +884,27 @@ export default function StudioPage() {
         break;
 
       case "stream":
-        // Stream AI response text (conversational only, no XML)
+        // Stream AI response text - backend already filters, only sends conversational text
         if (data.content && typeof data.content === "string") {
+          const content = data.content;
+
           setMessages((prev) =>
             prev.map((msg) => {
               if (msg.id === messageId) {
                 const currentContent = msg.content || "";
                 const hasExplanation = msg.hasExplanation;
 
-                // If has explanation, append AFTER it with separator
-                if (
-                  hasExplanation &&
-                  currentContent &&
-                  !currentContent.includes(data.content)
-                ) {
-                  return {
-                    ...msg,
-                    content: currentContent + "\n\n" + data.content,
-                  };
+                // If has explanation, don't append stream content (explanation is complete)
+                if (hasExplanation) {
+                  return msg;
                 }
 
                 // Otherwise, clear placeholder and set content
                 const isPlaceholder =
                   currentContent === "Analyzing your request...";
                 const newContent = isPlaceholder
-                  ? data.content
-                  : currentContent + data.content;
+                  ? content
+                  : currentContent + content;
 
                 return {
                   ...msg,
@@ -718,29 +936,41 @@ export default function StudioPage() {
         setStage("done");
         // Ensure timers/queues cleared
         explanationReceivedRef.current = true;
+        explanationStreamingCompleteRef.current = true;
         if (fallbackExplanationTimerRef.current) {
           clearTimeout(fallbackExplanationTimerRef.current);
           fallbackExplanationTimerRef.current = null;
         }
 
-        // Finalize activities and attach final summary + snapshot of completed files
+        // Mark all workbench files as completed
+        setWorkbenchFiles((prev) =>
+          prev.map((f) => ({ ...f, status: "completed" }))
+        );
+
+        // Finalize activities and attach final summary + snapshot of files
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
             const activities = (msg.activities || []).map((a) =>
               a.status === "in_progress" ? { ...a, status: "completed" } : a
             );
-            const snapshot =
+            const filesSnapshot =
               completedFiles && completedFiles.length
                 ? [...completedFiles]
                 : msg.completedFilesSnapshot || [];
+            // Save workbench files snapshot for prior messages display
+            const wbSnapshot =
+              workbenchFiles && workbenchFiles.length
+                ? workbenchFiles.map((f) => ({ ...f, status: "completed" }))
+                : msg.workbenchFilesSnapshot || [];
             return {
               ...msg,
               activities,
               postContent: data.finalMessage
                 ? String(data.finalMessage)
                 : msg.postContent,
-              completedFilesSnapshot: snapshot,
+              completedFilesSnapshot: filesSnapshot,
+              workbenchFilesSnapshot: wbSnapshot,
             };
           })
         );
@@ -748,6 +978,7 @@ export default function StudioPage() {
         // Clear streaming state BUT keep files
         setStreamingCode("");
         setCurrentFile(null);
+        setStreamingMessageId(null); // Clear streaming message - no message should animate now
 
         // Always MERGE backend files into client-parsed files to ensure completeness
         // This prevents cases where a few files were parsed client-side, but others were missed.
@@ -864,6 +1095,15 @@ export default function StudioPage() {
     }
   };
 
+  // Handle file click from the left panel workbench
+  const handleFileClickFromWorkbench = useCallback((filePath) => {
+    console.log(`[Studio] File clicked from workbench: ${filePath}`);
+    // Switch to code tab
+    setActiveTab("code");
+    // Set the external selected file to trigger selection in RightPanel
+    setExternalSelectedFile(filePath);
+  }, []);
+
   // Handle file content updates from the editor
   const handleFileUpdate = useCallback((filePath, newContent) => {
     console.log(`[Studio] File updated by user: ${filePath}`);
@@ -920,6 +1160,9 @@ export default function StudioPage() {
             streamingCode={streamingCode}
             currentFile={currentFile}
             completedFiles={completedFiles}
+            workbenchFiles={workbenchFiles}
+            onFileClick={handleFileClickFromWorkbench}
+            streamingMessageId={streamingMessageId}
           />
         }
         rightPanel={
@@ -934,6 +1177,7 @@ export default function StudioPage() {
             onPreviewRestart={createAndStartSandbox}
             onPreviewStop={stopSandbox}
             onFileUpdate={handleFileUpdate}
+            externalSelectedFile={externalSelectedFile}
           />
         }
       />
