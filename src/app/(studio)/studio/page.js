@@ -32,6 +32,7 @@ export default function StudioPage() {
   // Workbench files state - tracks all files with their statuses for left panel display
   // This is separate from completedFiles to ensure proper accumulation and persistence
   const [workbenchFiles, setWorkbenchFiles] = useState([]); // { path, status: 'in_progress' | 'completed', action: 'Create' | 'Edit' }
+  const workbenchFilesRef = useRef([]); // Ref to avoid stale closure in SSE handler
 
   // Track the ID of the currently streaming message - ONLY this message should animate
   const [streamingMessageId, setStreamingMessageId] = useState(null);
@@ -53,6 +54,11 @@ export default function StudioPage() {
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  // Keep workbenchFilesRef in sync to avoid stale closures in SSE handler
+  useEffect(() => {
+    workbenchFilesRef.current = workbenchFiles;
+  }, [workbenchFiles]);
 
   // Track user-edited files to protect them from AI overwrites
   const userEditedFilesRef = useRef(new Set());
@@ -959,9 +965,11 @@ export default function StudioPage() {
                 ? [...completedFiles]
                 : msg.completedFilesSnapshot || [];
             // Save workbench files snapshot for prior messages display
+            // Use ref to get current value and avoid stale closure
+            const currentWbFiles = workbenchFilesRef.current;
             const wbSnapshot =
-              workbenchFiles && workbenchFiles.length
-                ? workbenchFiles.map((f) => ({ ...f, status: "completed" }))
+              currentWbFiles && currentWbFiles.length
+                ? currentWbFiles.map((f) => ({ ...f, status: "completed" }))
                 : msg.workbenchFilesSnapshot || [];
             return {
               ...msg,
@@ -978,7 +986,8 @@ export default function StudioPage() {
         // Clear streaming state BUT keep files
         setStreamingCode("");
         setCurrentFile(null);
-        setStreamingMessageId(null); // Clear streaming message - no message should animate now
+        // NOTE: Don't clear streamingMessageId here - keep it so postContent can stream
+        // It will be replaced when a NEW generation starts, preventing previous messages from re-streaming
 
         // Always MERGE backend files into client-parsed files to ensure completeness
         // This prevents cases where a few files were parsed client-side, but others were missed.
