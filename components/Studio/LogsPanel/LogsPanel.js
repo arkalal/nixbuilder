@@ -2,18 +2,27 @@
 
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { FiTerminal } from "react-icons/fi";
+import { FiTerminal, FiAlertCircle } from "react-icons/fi";
+import ErrorDisplay from "../ErrorDisplay/ErrorDisplay";
 import styles from "./LogsPanel.module.scss";
 
-export default function LogsPanel({ logs }) {
+export default function LogsPanel({
+  logs,
+  errors = [],
+  onAutoFix,
+  isFixing = false,
+  fixResult = null,
+}) {
   const logsEndRef = useRef(null);
 
   useEffect(() => {
     // Auto-scroll to bottom when new logs arrive
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+  }, [logs, errors]);
 
-  if (logs.length === 0) {
+  const hasContent = logs.length > 0 || errors.length > 0;
+
+  if (!hasContent) {
     return (
       <div className={styles.emptyState}>
         <div className={styles.emptyIcon}>
@@ -30,6 +39,30 @@ export default function LogsPanel({ logs }) {
   return (
     <div className={styles.logsPanel}>
       <div className={styles.logsContent}>
+        {/* Error Display Section */}
+        {errors.length > 0 && (
+          <div className={styles.errorsSection}>
+            <div className={styles.errorsSectionHeader}>
+              <FiAlertCircle />
+              <span>
+                {errors.length} Error{errors.length !== 1 ? "s" : ""} Detected
+              </span>
+            </div>
+            <AnimatePresence>
+              {errors.map((error, index) => (
+                <ErrorDisplay
+                  key={`error-${index}`}
+                  error={error}
+                  onAutoFix={onAutoFix}
+                  isFixing={isFixing}
+                  fixResult={fixResult}
+                />
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {/* Regular Logs */}
         <AnimatePresence initial={false}>
           {logs.map((log, index) => (
             <motion.div

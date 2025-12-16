@@ -27,6 +27,11 @@ export default function RightPanel({
   onPreviewStop,
   onFileUpdate, // Callback when file content is edited
   externalSelectedFile, // File selected from left panel workbench
+  // Error recovery props
+  errors = [],
+  onAutoFix,
+  isFixing = false,
+  fixResult = null,
 }) {
   const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
   const [closedTabs, setClosedTabs] = useState(new Set()); // Track explicitly closed tabs
@@ -168,7 +173,15 @@ export default function RightPanel({
             onStop={onPreviewStop}
           />
         )}
-        {activeTab === "logs" && <LogsPanel logs={logs} />}
+        {activeTab === "logs" && (
+          <LogsPanel
+            logs={logs}
+            errors={errors}
+            onAutoFix={onAutoFix}
+            isFixing={isFixing}
+            fixResult={fixResult}
+          />
+        )}
       </div>
     </div>
   );

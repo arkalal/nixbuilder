@@ -3,6 +3,16 @@ import { createSSEStream, createSSEResponse } from "../../../../lib/sse";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../auth";
 import { globalVFS } from "../../../../lib/vfs";
+import {
+  selectContextFiles,
+  formatContext,
+} from "../../../../lib/services/contextSelector";
+import { buildDependencyGraph } from "../../../../lib/services/dependencyGraph";
+import {
+  processHistory,
+  formatHistoryForPrompt,
+  needsSummary,
+} from "../../../../lib/services/chatSummary";
 
 export async function POST(request) {
   try {
@@ -65,27 +75,88 @@ export async function POST(request) {
             // Build project context for iterative edits (re-evaluate each attempt to reflect any prior files)
             const existingFiles = globalVFS.getAllFiles();
             const filePaths = Object.keys(existingFiles);
-            const keyFiles = [
-              "app/page.jsx",
-              "app/layout.jsx",
-              "app/globals.scss",
-              "package.json",
-              "next.config.mjs",
-              "jsconfig.json",
-            ];
-            const keyContents = keyFiles
-              .filter((p) => existingFiles[p])
-              .map((p) => `--- ${p} ---\n${existingFiles[p]}`)
-              .join("\n\n");
-            const historyText = Array.isArray(history)
-              ? `\n\nCONVERSATION HISTORY (latest first)\n----------------------------------\n${[
+
+            // Use AI-powered context selection for smart file selection
+            let contextResult;
+            let keyContents;
+
+            try {
+              // Smart context selection with dependency graph
+              contextResult = selectContextFiles(message, existingFiles, {
+                maxFiles: 12,
+                maxChars: 50000,
+                includeGraph: filePaths.length > 0,
+              });
+
+              keyContents = formatContext(
+                existingFiles,
+                contextResult.selected
+              );
+              console.log(
+                `[API] Smart context: ${contextResult.selected.length} files selected`
+              );
+            } catch (contextError) {
+              // Fallback to basic context selection
+              console.warn(
+                "[API] Context selection failed, using fallback:",
+                contextError.message
+              );
+              const keyFiles = [
+                "app/page.jsx",
+                "app/layout.jsx",
+                "app/globals.scss",
+                "package.json",
+                "next.config.mjs",
+                "jsconfig.json",
+              ].filter((p) => existingFiles[p]);
+
+              keyContents = keyFiles
+                .map((p) => `--- ${p} ---\n${existingFiles[p]}`)
+                .join("\n\n");
+            }
+
+            // Process chat history with summarization for long conversations
+            let historyText = "";
+            if (Array.isArray(history) && history.length > 0) {
+              try {
+                if (needsSummary(history, 10)) {
+                  // Use AI-powered summarization for long conversations
+                  const processedHistory = await processHistory(history, {
+                    threshold: 10,
+                    keepRecent: 4,
+                    model: model,
+                  });
+                  historyText =
+                    "\n\n" + formatHistoryForPrompt(processedHistory);
+                  console.log(
+                    `[API] Chat history summarized: ${
+                      processedHistory.summarizedCount || 0
+                    } messages compressed`
+                  );
+                } else {
+                  // Short history - include as-is
+                  historyText = `\n\nCONVERSATION HISTORY (latest first)\n----------------------------------\n${[
+                    ...history,
+                  ]
+                    .slice(-6)
+                    .reverse()
+                    .map((h) => `${h.role.toUpperCase()}: ${h.content || ""}`)
+                    .join("\n")}`;
+                }
+              } catch (historyError) {
+                console.warn(
+                  "[API] History processing failed, using fallback:",
+                  historyError.message
+                );
+                historyText = `\n\nCONVERSATION HISTORY (latest first)\n----------------------------------\n${[
                   ...history,
                 ]
                   .slice(-6)
                   .reverse()
                   .map((h) => `${h.role.toUpperCase()}: ${h.content || ""}`)
-                  .join("\n")}`
-              : "";
+                  .join("\n")}`;
+              }
+            }
             const context = `Existing files (${filePaths.length}):\n${filePaths
               .map((p) => `- ${p}`)
               .join("\n")}\n\n${keyContents}${historyText}`;

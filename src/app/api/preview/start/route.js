@@ -6,6 +6,13 @@ import {
   setSandbox,
   touch,
 } from "../../../../../lib/sandbox/manager";
+import {
+  captureInstallErrors,
+  captureRuntimeErrors,
+  generateErrorSummary,
+  isFixableError,
+  ERROR_TYPES,
+} from "../../../../../lib/agent/index.js";
 
 function computeCSP() {
   const allowOrigins =
@@ -582,32 +589,161 @@ export async function POST(request) {
     filesWithHeaders = ensureNextAuthPreviewConfig(filesWithHeaders);
     await provider.writeFiles(filesWithHeaders);
 
-    // Install dependencies, start dev server
+    // Install dependencies with error capture
     const install = await provider.installDependencies();
     if (!install || install.exitCode !== 0) {
       const logs = `${install?.stdout || ""}\n${install?.stderr || ""}`.trim();
-      throw new Error(
-        `npm install failed with exit code ${
-          install?.exitCode ?? "unknown"
-        }\n${logs}`
+
+      // Use agent error capture for better error info
+      const errorInfo = {
+        type: ERROR_TYPES.NPM_INSTALL,
+        message: extractNpmErrorMessage(logs),
+        raw: logs,
+        exitCode: install?.exitCode,
+        packages: parseFailedPackagesFromLogs(logs),
+        fixable: true,
+      };
+
+      console.error(
+        "[Preview Start] Install error:",
+        generateErrorSummary(errorInfo)
+      );
+
+      return Response.json(
+        {
+          success: false,
+          error: errorInfo.message,
+          errorDetails: {
+            type: errorInfo.type,
+            message: errorInfo.message,
+            packages: errorInfo.packages,
+            fixable: errorInfo.fixable,
+            raw: logs.substring(0, 2000), // Limit raw output size
+          },
+        },
+        { status: 400 }
       );
     }
-    await provider.startDevServer();
+
+    // Start dev server
+    try {
+      await provider.startDevServer();
+    } catch (devError) {
+      const devLogs = await provider.getDevLog?.().catch(() => "");
+
+      const errorInfo = {
+        type: ERROR_TYPES.COMPILATION,
+        message: devError.message,
+        raw: devLogs,
+        fixable: isFixableError({
+          type: ERROR_TYPES.COMPILATION,
+          message: devError.message,
+        }),
+      };
+
+      console.error(
+        "[Preview Start] Dev server error:",
+        generateErrorSummary(errorInfo)
+      );
+
+      return Response.json(
+        {
+          success: false,
+          error: errorInfo.message,
+          errorDetails: {
+            type: errorInfo.type,
+            message: errorInfo.message,
+            fixable: errorInfo.fixable,
+            raw: devLogs.substring(0, 2000),
+          },
+        },
+        { status: 400 }
+      );
+    }
 
     const info = provider.getInfo();
     touch(session.user.email, projectId);
+
+    // Check for runtime errors after server starts
+    const runtimeError = await captureRuntimeErrors(provider, 2000);
 
     return Response.json({
       success: true,
       sandboxId: info.sandboxId,
       url: info.url,
       state: info.state,
+      hasWarnings: !!runtimeError,
+      warning: runtimeError
+        ? {
+            type: runtimeError.type,
+            message: runtimeError.message,
+            file: runtimeError.file,
+            line: runtimeError.line,
+          }
+        : null,
     });
   } catch (error) {
     console.error("[Preview Start] Error:", error);
     return Response.json(
-      { error: error.message || "Failed to start preview" },
+      {
+        success: false,
+        error: error.message || "Failed to start preview",
+        errorDetails: {
+          type: ERROR_TYPES.UNKNOWN,
+          message: error.message,
+          fixable: false,
+        },
+      },
       { status: 500 }
     );
   }
+}
+
+// Helper to extract npm error message
+function extractNpmErrorMessage(output) {
+  const errLines = output
+    .split("\n")
+    .filter((line) => line.includes("npm ERR!") || line.includes("npm error"));
+
+  if (errLines.length > 0) {
+    const meaningful = errLines.find(
+      (line) =>
+        line.includes("404") ||
+        line.includes("ERESOLVE") ||
+        line.includes("peer dep") ||
+        line.includes("not found") ||
+        line.includes("No matching version")
+    );
+    return meaningful || errLines[0];
+  }
+
+  const firstError = output
+    .split("\n")
+    .find(
+      (line) =>
+        line.toLowerCase().includes("error") ||
+        line.toLowerCase().includes("failed")
+    );
+
+  return firstError || "npm install failed";
+}
+
+// Helper to parse failed packages from npm output
+function parseFailedPackagesFromLogs(output) {
+  const packages = [];
+
+  const notFoundPattern = /404.*registry\.npmjs\.org\/([^\s/]+)/g;
+  let match;
+  while ((match = notFoundPattern.exec(output))) {
+    packages.push({ name: match[1], reason: "not_found" });
+  }
+
+  const resolvePattern = /Could not resolve dependency[:\s]+([^\s@]+)/g;
+  while ((match = resolvePattern.exec(output))) {
+    if (!packages.find((p) => p.name === match[1])) {
+      packages.push({ name: match[1], reason: "resolve_failed" });
+    }
+  }
+
+  return packages;
 }

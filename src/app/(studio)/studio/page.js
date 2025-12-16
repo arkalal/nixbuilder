@@ -23,6 +23,11 @@ export default function StudioPage() {
   const logsReaderRef = useRef(null);
   const sandboxBusyRef = useRef(false); // prevents re-entrant sandbox runs
 
+  // Error recovery state
+  const [previewErrors, setPreviewErrors] = useState([]); // Array of error objects from preview
+  const [isFixing, setIsFixing] = useState(false); // Whether auto-fix is in progress
+  const [fixResult, setFixResult] = useState(null); // Result of last fix attempt
+
   // Open-lovable style streaming state
   const [streamingCode, setStreamingCode] = useState("");
   const [currentFile, setCurrentFile] = useState(null); // { path, content, type }
@@ -303,22 +308,69 @@ export default function StudioPage() {
         );
       }
 
-      // Start E2B preview (creates sandbox, writes files, installs, starts dev)
+      // Clear previous errors before starting
+      setPreviewErrors([]);
+      setFixResult(null);
+
+      // Start preview (creates sandbox, writes files, installs, starts dev)
       const startResponse = await fetch("/api/preview/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, files: filesMap }),
       });
-      if (!startResponse.ok) {
-        const err = await startResponse.json().catch(() => ({}));
-        throw new Error(err?.error || "Failed to start preview");
+
+      const startData = await startResponse.json().catch(() => ({}));
+
+      // Check if preview failed with error details
+      if (!startResponse.ok || startData.success === false) {
+        // Capture structured error from the API
+        if (startData.errorDetails) {
+          const errorObj = {
+            type: startData.errorDetails.type || "unknown",
+            message:
+              startData.errorDetails.message ||
+              startData.error ||
+              "Preview failed",
+            raw: startData.errorDetails.raw || "",
+            packages: startData.errorDetails.packages || [],
+            fixable: startData.errorDetails.fixable !== false,
+            suggestions: getSuggestionsForError(startData.errorDetails.type),
+          };
+          setPreviewErrors([errorObj]);
+          setActiveTab("logs"); // Switch to logs to show the error
+          setLogs((prev) => [
+            ...prev,
+            {
+              level: "error",
+              message: `Preview failed: ${errorObj.message}`,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+          // Don't throw - we've captured the error for display
+          return;
+        }
+        throw new Error(startData?.error || "Failed to start preview");
       }
-      const startData = await startResponse.json();
+
       setSandboxId(startData.sandboxId || null);
       if (startData.url) {
         setPreviewUrl(startData.url);
         setActiveTab("preview");
       }
+
+      // Check for warnings (runtime errors that didn't block startup)
+      if (startData.hasWarnings && startData.warning) {
+        const warningError = {
+          type: startData.warning.type || "runtime",
+          message: startData.warning.message,
+          file: startData.warning.file,
+          line: startData.warning.line,
+          fixable: true,
+          suggestions: getSuggestionsForError(startData.warning.type),
+        };
+        setPreviewErrors([warningError]);
+      }
+
       setLogs((prev) => [
         ...prev,
         {
@@ -334,7 +386,7 @@ export default function StudioPage() {
         ...(startData.url
           ? [
               {
-                level: "info",
+                level: "success",
                 message: `Preview available at: ${startData.url}`,
                 timestamp: new Date().toISOString(),
               },
@@ -1113,6 +1165,163 @@ export default function StudioPage() {
     setExternalSelectedFile(filePath);
   }, []);
 
+  // Helper to get suggestions for error types
+  const getSuggestionsForError = (errorType) => {
+    const suggestions = {
+      npm_install: [
+        "Check if the package name is spelled correctly",
+        "The package may not exist on npm registry",
+        "Try removing and re-adding the dependency",
+      ],
+      compilation: [
+        "Check for syntax errors in your code",
+        "Verify all imports are correct",
+        "Ensure JSX tags are properly closed",
+      ],
+      runtime: [
+        "Check the browser console for more details",
+        "Verify all variables are defined before use",
+        "Use optional chaining (?.) for potentially undefined values",
+      ],
+      hydration: [
+        "Ensure server and client render identical content",
+        "Wrap browser-only code in useEffect",
+        "Avoid Date.now() or Math.random() during render",
+      ],
+      module_not_found: [
+        "Check if the import path is correct",
+        "Verify the file extension matches",
+        "Ensure the module is installed",
+      ],
+      syntax: [
+        "Check for missing brackets or parentheses",
+        "Verify JSX is properly closed",
+        "Look for stray characters",
+      ],
+    };
+    return suggestions[errorType] || ["Review the error message for details"];
+  };
+
+  // Handle auto-fix request
+  const handleAutoFix = useCallback(
+    async (error) => {
+      if (isFixing || !projectId) return;
+
+      console.log("[Studio] Starting auto-fix for error:", error.type);
+      setIsFixing(true);
+      setFixResult(null);
+
+      // Add log entry
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: `Attempting to fix ${error.type} error...`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      try {
+        const response = await fetch("/api/preview/fix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId,
+            error: {
+              type: error.type,
+              message: error.message,
+              raw: error.raw,
+              file: error.file,
+              line: error.line,
+            },
+            model: selectedModel,
+            stream: false,
+          }),
+        });
+
+        const result = await response.json().catch(() => ({}));
+
+        if (result.success) {
+          setFixResult({
+            success: true,
+            filesFixed: result.filesFixed,
+            fixedFiles: result.fixedFiles,
+          });
+          setPreviewErrors([]); // Clear errors on successful fix
+
+          // Update local files state with fixed files
+          if (result.fixedFiles && result.fixedFiles.length > 0) {
+            // Refresh files from VFS
+            const vfsResponse = await fetch("/api/studio/files");
+            if (vfsResponse.ok) {
+              const vfsData = await vfsResponse.json();
+              if (vfsData.files) {
+                setFiles(
+                  Object.entries(vfsData.files).map(([path, content]) => ({
+                    path,
+                    content,
+                    type: getFileType(path),
+                    updatedAt: new Date().toISOString(),
+                  }))
+                );
+              }
+            }
+          }
+
+          setLogs((prev) => [
+            ...prev,
+            {
+              level: "success",
+              message: `Fixed ${result.filesFixed} file(s): ${
+                result.fixedFiles?.join(", ") || ""
+              }`,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+
+          // Auto-restart preview after fix
+          setTimeout(() => {
+            createAndStartSandbox();
+          }, 500);
+        } else {
+          setFixResult({ success: false });
+          setLogs((prev) => [
+            ...prev,
+            {
+              level: "warn",
+              message:
+                "Auto-fix could not resolve the error. Manual intervention may be needed.",
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        }
+      } catch (err) {
+        console.error("[Studio] Auto-fix error:", err);
+        setFixResult({ success: false, error: err.message });
+        setLogs((prev) => [
+          ...prev,
+          {
+            level: "error",
+            message: `Auto-fix failed: ${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      } finally {
+        setIsFixing(false);
+      }
+    },
+    [isFixing, projectId, selectedModel, createAndStartSandbox]
+  );
+
+  // Helper to get file type from extension
+  const getFileType = (path) => {
+    const ext = path.split(".").pop()?.toLowerCase();
+    if (ext === "jsx" || ext === "js" || ext === "mjs") return "javascript";
+    if (ext === "css" || ext === "scss") return "css";
+    if (ext === "json") return "json";
+    return "text";
+  };
+
   // Handle file content updates from the editor
   const handleFileUpdate = useCallback((filePath, newContent) => {
     console.log(`[Studio] File updated by user: ${filePath}`);
@@ -1187,6 +1396,10 @@ export default function StudioPage() {
             onPreviewStop={stopSandbox}
             onFileUpdate={handleFileUpdate}
             externalSelectedFile={externalSelectedFile}
+            errors={previewErrors}
+            onAutoFix={handleAutoFix}
+            isFixing={isFixing}
+            fixResult={fixResult}
           />
         }
       />
