@@ -2,7 +2,13 @@
 
 import React, { useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { FiCode, FiEye, FiTerminal } from "react-icons/fi";
+import {
+  FiCode,
+  FiEye,
+  FiTerminal,
+  FiRotateCcw,
+  FiRotateCw,
+} from "react-icons/fi";
 import FileExplorer from "../FileExplorer/FileExplorer";
 import CodeViewer from "../CodeViewer/CodeViewer";
 import PreviewPanel from "../PreviewPanel/PreviewPanel";
@@ -32,6 +38,17 @@ export default function RightPanel({
   onAutoFix,
   isFixing = false,
   fixResult = null,
+  // Version control props
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
+  versionHistory = [],
+  onRevertToVersion,
+  // File operations props
+  onFileCreate,
+  onFileDelete,
+  onFileRename,
 }) {
   const [manuallySelectedFile, setManuallySelectedFile] = useState(null);
   const [closedTabs, setClosedTabs] = useState(new Set()); // Track explicitly closed tabs
@@ -138,6 +155,30 @@ export default function RightPanel({
             </button>
           );
         })}
+
+        {/* Version control buttons */}
+        <div className={styles.versionControls}>
+          <button
+            className={`${styles.versionBtn} ${
+              !canUndo ? styles.disabled : ""
+            }`}
+            onClick={onUndo}
+            disabled={!canUndo}
+            title="Undo last AI change (Ctrl+Z)"
+          >
+            <FiRotateCcw />
+          </button>
+          <button
+            className={`${styles.versionBtn} ${
+              !canRedo ? styles.disabled : ""
+            }`}
+            onClick={onRedo}
+            disabled={!canRedo}
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <FiRotateCw />
+          </button>
+        </div>
       </div>
 
       <div className={styles.tabContent}>
@@ -148,6 +189,9 @@ export default function RightPanel({
                 files={files}
                 selectedFile={selectedFile}
                 onFileSelect={handleFileSelect}
+                onFileCreate={onFileCreate}
+                onFileDelete={onFileDelete}
+                onFileRename={onFileRename}
               />
             </div>
             <div className={styles.codeViewerPanel}>

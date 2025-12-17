@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import StudioLayout from "../../../../components/Studio/StudioLayout/StudioLayout";
 import Composer from "../../../../components/Studio/Composer/Composer";
 import RightPanel from "../../../../components/Studio/RightPanel/RightPanel";
+import { globalVersionManager } from "../../../../lib/services/versionManager";
 import styles from "./Studio.module.scss";
 
 export default function StudioPage() {
@@ -27,6 +28,12 @@ export default function StudioPage() {
   const [previewErrors, setPreviewErrors] = useState([]); // Array of error objects from preview
   const [isFixing, setIsFixing] = useState(false); // Whether auto-fix is in progress
   const [fixResult, setFixResult] = useState(null); // Result of last fix attempt
+
+  // Version history state for undo/revert
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [versionHistory, setVersionHistory] = useState([]);
+  const versionManagerRef = useRef(globalVersionManager);
 
   // Open-lovable style streaming state
   const [streamingCode, setStreamingCode] = useState("");
@@ -75,6 +82,272 @@ export default function StudioPage() {
     idCounterRef.current += 1;
     return `${Date.now()}-${idCounterRef.current}`;
   };
+
+  // Version manager subscription - update UI state when versions change
+  useEffect(() => {
+    const vm = versionManagerRef.current;
+    const updateVersionState = () => {
+      setCanUndo(vm.canUndo());
+      setCanRedo(vm.canRedo());
+      setVersionHistory(vm.getHistory());
+    };
+
+    // Initial state
+    updateVersionState();
+
+    // Subscribe to changes
+    const unsubscribe = vm.subscribe(() => {
+      updateVersionState();
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Helper to create file map from files array
+  const getFilesMap = useCallback(() => {
+    const map = {};
+    filesRef.current.forEach((f) => {
+      map[f.path] = f.content;
+    });
+    return map;
+  }, []);
+
+  // Create snapshot before AI generation
+  const createPreAISnapshot = useCallback(
+    (userPrompt) => {
+      const vm = versionManagerRef.current;
+      const filesMap = getFilesMap();
+      vm.createSnapshot(filesMap, {
+        type: "pre_ai_change",
+        message: `Before: ${userPrompt.substring(0, 50)}${
+          userPrompt.length > 50 ? "..." : ""
+        }`,
+        userPrompt: userPrompt,
+      });
+      console.log("[Studio] Created pre-AI snapshot");
+    },
+    [getFilesMap]
+  );
+
+  // Create snapshot after AI generation completes
+  const createPostAISnapshot = useCallback(
+    (userPrompt, filesChanged = []) => {
+      const vm = versionManagerRef.current;
+      const filesMap = getFilesMap();
+      vm.createSnapshot(filesMap, {
+        type: "post_ai_change",
+        message: `After: ${userPrompt.substring(0, 50)}${
+          userPrompt.length > 50 ? "..." : ""
+        }`,
+        userPrompt: userPrompt,
+        filesChanged: filesChanged,
+      });
+      console.log("[Studio] Created post-AI snapshot");
+    },
+    [getFilesMap]
+  );
+
+  // Undo last AI change
+  const handleUndo = useCallback(() => {
+    const vm = versionManagerRef.current;
+    const previousFiles = vm.undo();
+    if (previousFiles) {
+      // Convert back to files array format
+      const filesArray = Object.entries(previousFiles).map(
+        ([path, content]) => {
+          const fileExt = path.split(".").pop();
+          const fileType =
+            fileExt === "jsx" || fileExt === "js"
+              ? "javascript"
+              : fileExt === "css" || fileExt === "scss"
+              ? "css"
+              : fileExt === "json"
+              ? "json"
+              : "text";
+          return { path, content, type: fileType };
+        }
+      );
+      setFiles(filesArray);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: "Reverted to previous version",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      console.log("[Studio] Undo completed");
+    }
+  }, []);
+
+  // Redo (after undo)
+  const handleRedo = useCallback(() => {
+    const vm = versionManagerRef.current;
+    const nextFiles = vm.redo();
+    if (nextFiles) {
+      const filesArray = Object.entries(nextFiles).map(([path, content]) => {
+        const fileExt = path.split(".").pop();
+        const fileType =
+          fileExt === "jsx" || fileExt === "js"
+            ? "javascript"
+            : fileExt === "css" || fileExt === "scss"
+            ? "css"
+            : fileExt === "json"
+            ? "json"
+            : "text";
+        return { path, content, type: fileType };
+      });
+      setFiles(filesArray);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: "Restored next version",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      console.log("[Studio] Redo completed");
+    }
+  }, []);
+
+  // State for composer input (to restore on undo)
+  const [composerInputValue, setComposerInputValue] = useState("");
+
+  // Undo a specific message - revert files and restore prompt to input
+  const handleUndoMessage = useCallback((messageId, userContent) => {
+    console.log("[Studio] Undoing message:", messageId);
+
+    // Use version manager to undo
+    const vm = versionManagerRef.current;
+    const previousFiles = vm.undo();
+
+    if (previousFiles) {
+      // Convert back to files array format
+      const filesArray = Object.entries(previousFiles).map(
+        ([path, content]) => {
+          const fileExt = path.split(".").pop();
+          const fileType =
+            fileExt === "jsx" || fileExt === "js"
+              ? "javascript"
+              : fileExt === "css" || fileExt === "scss"
+              ? "css"
+              : fileExt === "json"
+              ? "json"
+              : "text";
+          return { path, content, type: fileType };
+        }
+      );
+      setFiles(filesArray);
+    }
+
+    // Remove the user message and its assistant response from messages
+    setMessages((prev) => {
+      const messageIndex = prev.findIndex((m) => m.id === messageId);
+      if (messageIndex === -1) return prev;
+      // Remove user message and the next assistant message if exists
+      return prev.slice(0, messageIndex);
+    });
+
+    // Restore the prompt to the input box
+    setComposerInputValue(userContent);
+
+    setLogs((prev) => [
+      ...prev,
+      {
+        level: "info",
+        message: `Reverted changes from: "${userContent.substring(0, 50)}..."`,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }, []);
+
+  // Stop generation and revert to previous state
+  const handleStopGeneration = useCallback(() => {
+    console.log("[Studio] Stopping generation and reverting...");
+
+    // Set stage to done to stop the stream
+    setStage("done");
+
+    // Use version manager to undo to pre-generation state
+    const vm = versionManagerRef.current;
+    const previousFiles = vm.undo();
+
+    if (previousFiles) {
+      const filesArray = Object.entries(previousFiles).map(
+        ([path, content]) => {
+          const fileExt = path.split(".").pop();
+          const fileType =
+            fileExt === "jsx" || fileExt === "js"
+              ? "javascript"
+              : fileExt === "css" || fileExt === "scss"
+              ? "css"
+              : fileExt === "json"
+              ? "json"
+              : "text";
+          return { path, content, type: fileType };
+        }
+      );
+      setFiles(filesArray);
+    }
+
+    // Remove the last user message and incomplete assistant response
+    setMessages((prev) => {
+      // Find the last user message
+      const lastUserIndex = prev.map((m) => m.role).lastIndexOf("user");
+      if (lastUserIndex === -1) return prev;
+
+      const userMessage = prev[lastUserIndex];
+      // Restore prompt to input
+      setComposerInputValue(userMessage.content);
+
+      // Remove from last user message onwards
+      return prev.slice(0, lastUserIndex);
+    });
+
+    // Clear streaming state
+    setStreamingCode("");
+    setCurrentFile(null);
+    setWorkbenchFiles([]);
+
+    setLogs((prev) => [
+      ...prev,
+      {
+        level: "info",
+        message: "Generation stopped and changes reverted",
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }, []);
+
+  // Revert to specific version
+  const handleRevertToVersion = useCallback((versionId) => {
+    const vm = versionManagerRef.current;
+    const targetFiles = vm.revertTo(versionId);
+    if (targetFiles) {
+      const filesArray = Object.entries(targetFiles).map(([path, content]) => {
+        const fileExt = path.split(".").pop();
+        const fileType =
+          fileExt === "jsx" || fileExt === "js"
+            ? "javascript"
+            : fileExt === "css" || fileExt === "scss"
+            ? "css"
+            : fileExt === "json"
+            ? "json"
+            : "text";
+        return { path, content, type: fileType };
+      });
+      setFiles(filesArray);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: "Reverted to selected version",
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      console.log("[Studio] Reverted to version:", versionId);
+    }
+  }, []);
 
   const processDisplayQueue = useCallback(() => {
     if (isDisplayingRef.current) return;
@@ -470,6 +743,9 @@ export default function StudioPage() {
 
     // Set this as the currently streaming message - ONLY this message should animate
     setStreamingMessageId(aiMessageId);
+
+    // Create snapshot BEFORE AI generation starts (for undo/revert)
+    createPreAISnapshot(message);
 
     try {
       // Call /api/chat with SSE
@@ -1128,6 +1404,16 @@ export default function StudioPage() {
         // Stage set to 'done' so user can manually start preview when ready
         setStage("done");
 
+        // Create snapshot AFTER AI generation completes (for version history)
+        // Use setTimeout to ensure files state has updated
+        setTimeout(() => {
+          const changedFiles = data.files ? Object.keys(data.files) : [];
+          // Find the user prompt from the messages
+          const userMsg = messages.find((m) => m.role === "user");
+          const userPrompt = userMsg?.content || "AI generation";
+          createPostAISnapshot(userPrompt, changedFiles);
+        }, 100);
+
         break;
 
       case "error":
@@ -1365,6 +1651,191 @@ export default function StudioPage() {
     });
   }, []);
 
+  // Handle file creation from FileExplorer
+  const handleFileCreate = useCallback(async (path, isFolder) => {
+    console.log(`[Studio] Creating ${isFolder ? "folder" : "file"}: ${path}`);
+
+    try {
+      const response = await fetch("/api/studio/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "create",
+          path: isFolder ? `${path}/` : path,
+          content: isFolder ? undefined : getDefaultContent(path),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create file");
+      }
+
+      const data = await response.json();
+
+      if (!isFolder) {
+        // Add to local files state
+        const fileExt = path.split(".").pop();
+        const fileType =
+          fileExt === "jsx" || fileExt === "js"
+            ? "javascript"
+            : fileExt === "css" || fileExt === "scss"
+            ? "css"
+            : fileExt === "json"
+            ? "json"
+            : "text";
+
+        setFiles((prev) => [
+          ...prev,
+          {
+            path,
+            content: data.content || "",
+            type: fileType,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      }
+
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: `Created ${isFolder ? "folder" : "file"}: ${path}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    } catch (error) {
+      console.error("[Studio] Create file error:", error);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "error",
+          message: `Failed to create: ${path}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    }
+  }, []);
+
+  // Handle file deletion from FileExplorer
+  const handleFileDelete = useCallback(async (path) => {
+    console.log(`[Studio] Deleting file: ${path}`);
+
+    try {
+      const response = await fetch("/api/studio/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "delete", path }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete file");
+      }
+
+      // Remove from local files state
+      setFiles((prev) => prev.filter((f) => f.path !== path));
+
+      // Remove from user-edited tracking
+      userEditedFilesRef.current.delete(path);
+
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: `Deleted: ${path}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    } catch (error) {
+      console.error("[Studio] Delete file error:", error);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "error",
+          message: `Failed to delete: ${path}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    }
+  }, []);
+
+  // Handle file rename from FileExplorer
+  const handleFileRename = useCallback(async (oldPath, newPath) => {
+    console.log(`[Studio] Renaming file: ${oldPath} -> ${newPath}`);
+
+    try {
+      const response = await fetch("/api/studio/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "rename", path: oldPath, newPath }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to rename file");
+      }
+
+      // Update local files state
+      setFiles((prev) =>
+        prev.map((f) => {
+          if (f.path === oldPath) {
+            return { ...f, path: newPath, updatedAt: new Date().toISOString() };
+          }
+          return f;
+        })
+      );
+
+      // Update user-edited tracking
+      if (userEditedFilesRef.current.has(oldPath)) {
+        userEditedFilesRef.current.delete(oldPath);
+        userEditedFilesRef.current.add(newPath);
+      }
+
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "info",
+          message: `Renamed: ${oldPath} -> ${newPath}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    } catch (error) {
+      console.error("[Studio] Rename file error:", error);
+      setLogs((prev) => [
+        ...prev,
+        {
+          level: "error",
+          message: `Failed to rename: ${oldPath}`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+    }
+  }, []);
+
+  // Helper to get default content for new files
+  const getDefaultContent = (path) => {
+    const ext = path.split(".").pop().toLowerCase();
+    const name = path
+      .split("/")
+      .pop()
+      .replace(/\.[^/.]+$/, "");
+
+    switch (ext) {
+      case "jsx":
+        return `export default function ${
+          name.charAt(0).toUpperCase() + name.slice(1)
+        }() {\n  return (\n    <div>\n      <h1>${name}</h1>\n    </div>\n  );\n}\n`;
+      case "js":
+        return `// ${name}.js\n\nexport default function ${name}() {\n  // Your code here\n}\n`;
+      case "scss":
+        return `.${name} {\n  // Styles here\n}\n`;
+      case "css":
+        return `.${name} {\n  /* Styles here */\n}\n`;
+      case "json":
+        return "{\n  \n}\n";
+      default:
+        return "";
+    }
+  };
+
   return (
     <div className={styles.studioPage}>
       <StudioLayout
@@ -1381,6 +1852,9 @@ export default function StudioPage() {
             workbenchFiles={workbenchFiles}
             onFileClick={handleFileClickFromWorkbench}
             streamingMessageId={streamingMessageId}
+            onUndoMessage={handleUndoMessage}
+            onStopGeneration={handleStopGeneration}
+            externalInputValue={composerInputValue}
           />
         }
         rightPanel={
@@ -1400,6 +1874,15 @@ export default function StudioPage() {
             onAutoFix={handleAutoFix}
             isFixing={isFixing}
             fixResult={fixResult}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            versionHistory={versionHistory}
+            onRevertToVersion={handleRevertToVersion}
+            onFileCreate={handleFileCreate}
+            onFileDelete={handleFileDelete}
+            onFileRename={handleFileRename}
           />
         }
       />

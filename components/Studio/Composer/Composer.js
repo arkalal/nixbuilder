@@ -20,12 +20,33 @@ export default function Composer({
   workbenchFiles,
   onFileClick,
   streamingMessageId,
+  onUndoMessage,
+  onStopGeneration,
+  externalInputValue,
 }) {
-  const [inputValue, setInputValue] = useState("");
+  const [inputValue, setInputValueInternal] = useState("");
   const textareaRef = useRef(null);
   const timelineRef = useRef(null);
 
   const isProcessing = stage !== "idle" && stage !== "done";
+
+  // Allow external control of input value (for restoring prompts on undo)
+  const setInputValue = (value) => {
+    setInputValueInternal(value);
+  };
+
+  // Sync with external input value (for when undo restores prompt)
+  // Using a ref to track last synced value to avoid cascading renders
+  const lastSyncedValueRef = useRef("");
+  useEffect(() => {
+    if (
+      externalInputValue &&
+      externalInputValue !== lastSyncedValueRef.current
+    ) {
+      setInputValueInternal(externalInputValue);
+      lastSyncedValueRef.current = externalInputValue;
+    }
+  }, [externalInputValue]);
 
   // Auto-scroll timeline as streaming progresses
   useEffect(() => {
@@ -86,6 +107,9 @@ export default function Composer({
           workbenchFiles={workbenchFiles}
           onFileClick={onFileClick}
           streamingMessageId={streamingMessageId}
+          onUndoMessage={onUndoMessage}
+          onStopGeneration={onStopGeneration}
+          isGenerating={stage === "generating"}
         />
       </div>
 

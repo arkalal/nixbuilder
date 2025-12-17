@@ -8,6 +8,9 @@ import {
   FiCheck,
   FiLoader,
   FiAlertCircle,
+  FiRotateCcw,
+  FiX,
+  FiSquare,
 } from "react-icons/fi";
 import StreamingCodeDisplay from "../StreamingCodeDisplay/StreamingCodeDisplay";
 import styles from "./MessageTimeline.module.scss";
@@ -92,9 +95,40 @@ export default function MessageTimeline({
   workbenchFiles = [],
   onFileClick,
   streamingMessageId,
+  onUndoMessage,
+  onStopGeneration,
+  isGenerating = false,
 }) {
+  const [showUndoConfirm, setShowUndoConfirm] = useState(null); // { messageId, userContent, changedFiles }
   const bottomRef = React.useRef(null);
   const appName = React.useMemo(() => extractAppName(messages), [messages]);
+
+  // Handle undo click - show confirmation
+  const handleUndoClick = (userMessage, assistantMessage) => {
+    const changedFiles =
+      assistantMessage?.workbenchFilesSnapshot ||
+      assistantMessage?.completedFilesSnapshot ||
+      [];
+    setShowUndoConfirm({
+      messageId: userMessage.id,
+      userContent: userMessage.content,
+      changedFiles: changedFiles.map((f) => f.path || f),
+      assistantMessageId: assistantMessage?.id,
+    });
+  };
+
+  // Confirm undo
+  const confirmUndo = () => {
+    if (showUndoConfirm && onUndoMessage) {
+      onUndoMessage(showUndoConfirm.messageId, showUndoConfirm.userContent);
+    }
+    setShowUndoConfirm(null);
+  };
+
+  // Cancel undo
+  const cancelUndo = () => {
+    setShowUndoConfirm(null);
+  };
 
   // Auto-scroll to the newest content reliably
   React.useEffect(() => {
@@ -131,6 +165,19 @@ export default function MessageTimeline({
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.3, delay: index * 0.05 }}
           >
+            {/* Undo button for user messages - appears on hover */}
+            {message.role === "user" && index > 0 && (
+              <button
+                className={styles.undoButton}
+                onClick={() => {
+                  const assistantMsg = messages[index + 1];
+                  handleUndoClick(message, assistantMsg);
+                }}
+                title="Undo this change"
+              >
+                <FiRotateCcw />
+              </button>
+            )}
             <div className={styles.messageHeader}>
               <div className={styles.avatar}>
                 {message.role === "user" ? <FiUser /> : <FiCpu />}
@@ -238,6 +285,72 @@ export default function MessageTimeline({
         ))}
       </AnimatePresence>
       <div ref={bottomRef} />
+
+      {/* Stop button during generation */}
+      {isGenerating && onStopGeneration && (
+        <motion.div
+          className={styles.stopGenerationBar}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <button className={styles.stopButton} onClick={onStopGeneration}>
+            <FiSquare />
+            <span>Stop & Revert</span>
+          </button>
+        </motion.div>
+      )}
+
+      {/* Undo confirmation popup */}
+      {showUndoConfirm && (
+        <div className={styles.undoOverlay} onClick={cancelUndo}>
+          <motion.div
+            className={styles.undoPopup}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.undoPopupHeader}>
+              <h3>Undo Changes</h3>
+              <button onClick={cancelUndo} className={styles.closeBtn}>
+                <FiX />
+              </button>
+            </div>
+            <div className={styles.undoPopupContent}>
+              <p className={styles.undoPrompt}>
+                <strong>Prompt:</strong>{" "}
+                {showUndoConfirm.userContent.substring(0, 100)}
+                {showUndoConfirm.userContent.length > 100 ? "..." : ""}
+              </p>
+              {showUndoConfirm.changedFiles.length > 0 && (
+                <div className={styles.changedFilesList}>
+                  <strong>Files that will be reverted:</strong>
+                  <ul>
+                    {showUndoConfirm.changedFiles
+                      .slice(0, 10)
+                      .map((file, i) => (
+                        <li key={i}>{file}</li>
+                      ))}
+                    {showUndoConfirm.changedFiles.length > 10 && (
+                      <li>
+                        ...and {showUndoConfirm.changedFiles.length - 10} more
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className={styles.undoPopupActions}>
+              <button onClick={cancelUndo} className={styles.cancelBtn}>
+                Cancel
+              </button>
+              <button onClick={confirmUndo} className={styles.confirmBtn}>
+                <FiRotateCcw />
+                Confirm Undo
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
